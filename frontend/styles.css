@@ -1,0 +1,609 @@
+
+/* MOC COFFEE - GIAO DIEN QUAN LY */
+
+:root {
+  --brown: #69452f;
+  --dark: #2e241e;
+  --cream: #f8f5ef;
+  --card: #fff;
+  --text: #302a25;
+  --muted: #8e837a;
+  --line: #e9e2d8;
+  --green: #238366;
+  --red: #c75b52;
+  --shadow: 0 10px 32px rgba(70,47,30,.07);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cream);
+  color: var(--text);
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+}
+
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+h1, h2, h3, p { margin-top: 0; }
+a { color: inherit; }
+.hidden { display: none !important; }
+
+/* DANG NHAP */
+.login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  background: #fff;
+}
+
+.login-brand {
+  background: linear-gradient(145deg,#31251e,#775039);
+  padding: 9vw 7vw;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.brand-logo {
+  font-weight: 900;
+  letter-spacing: 2px;
+  font-size: 28px;
+}
+.brand-logo span { color: #e8c29a; }
+
+.login-brand h1 {
+  font-size: clamp(37px,5vw,70px);
+  line-height: 1.15;
+  margin: 34px 0 18px;
+}
+
+.login-brand p {
+  font-size: 17px;
+  line-height: 1.7;
+  color: #e8dbd0;
+  max-width: 520px;
+}
+
+.coffee-art {
+  font-size: 130px;
+  margin-top: 26px;
+  filter: drop-shadow(0 20px 14px rgba(0,0,0,.2));
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 35px;
+}
+
+.login-panel { width: min(420px,100%); }
+.login-panel h2 { font-size: 33px; margin: 0 0 9px; }
+.login-panel > p { color: var(--muted); margin-bottom: 30px; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0;
+}
+
+.field label { font-weight: 600; }
+
+.field input, .field select, .input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid #ded6cd;
+  border-radius: 12px;
+  background: white;
+  color: var(--text);
+  outline: none;
+}
+
+.field input:focus, .field select:focus, .input:focus {
+  border-color: var(--brown);
+  box-shadow: 0 0 0 3px #c6a78c30;
+}
+
+.login-help {
+  background: #f7f1e8;
+  border-radius: 12px;
+  padding: 16px;
+  color: #655142;
+  line-height: 1.9;
+  margin-top: 22px;
+}
+
+/* BO CUC UNG DUNG */
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  background: var(--dark);
+  color: #d5c9bf;
+  width: 248px;
+  min-width: 248px;
+  padding: 29px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar .brand-logo {
+  color: #fff;
+  font-size: 23px;
+  margin: 1px 15px 30px;
+}
+
+.nav {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 14px 16px;
+  border-radius: 12px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  font-weight: 600;
+}
+
+.nav:hover { background: #423329; color: #fff; }
+.nav.active { background: #78533b; color: #fff; }
+.nav-icon { font-size: 19px; width: 23px; }
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 17px 14px;
+  border-top: 1px solid #ffffff20;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.main { flex: 1; min-width: 0; }
+
+.topbar {
+  height: 77px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 35px;
+  gap: 16px;
+}
+
+.topbar strong { font-size: 19px; }
+.topbar .user { color: var(--muted); }
+
+.content {
+  padding: 31px 35px 55px;
+  max-width: 1550px;
+  margin: auto;
+}
+
+.heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.heading h1 { font-size: 29px; margin: 0 0 7px; }
+.heading p { color: var(--muted); margin: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 9px; }
+
+/* NUT BAM */
+.btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 11px;
+  padding: 10px 15px;
+  color: var(--text);
+  font-weight: 700;
+  transition: .15s;
+}
+
+.btn:hover { background: #f6f0e9; }
+
+.btn.primary {
+  background: var(--brown);
+  color: #fff;
+  border-color: var(--brown);
+}
+
+.btn.primary:hover { background: #513522; }
+.btn.danger { color: #b54d44; }
+
+.btn.green {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+
+.btn.small { padding: 6px 10px; font-size: 12px; }
+.btn.wide { width: 100%; padding: 14px; }
+
+.btn:focus-visible, .nav:focus-visible {
+  outline: 3px solid #c79b6e;
+}
+
+/* THONG KE VA BANG */
+.grid { display: grid; gap: 18px; }
+
+.stats {
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  margin-bottom: 22px;
+}
+
+.stat, .card {
+  background: var(--card);
+  border: 1px solid #efeae3;
+  box-shadow: var(--shadow);
+  border-radius: 17px;
+}
+
+.stat { padding: 23px; }
+.stat .label { color: var(--muted); font-weight: 600; }
+
+.stat .value {
+  font-size: 29px;
+  font-weight: 850;
+  margin: 15px 0 6px;
+  letter-spacing: -.7px;
+}
+
+.stat small { color: var(--green); }
+.card { padding: 23px; min-width: 0; }
+.card h2 { font-size: 19px; margin-bottom: 20px; }
+.two { grid-template-columns: 1.3fr 1fr; }
+.muted { color: var(--muted); }
+
+.empty {
+  text-align: center;
+  padding: 40px 10px;
+  color: var(--muted);
+}
+
+.pill {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 750;
+  border-radius: 100px;
+  padding: 5px 10px;
+  background: #f1eee9;
+  color: #5d5148;
+}
+
+.pill.green { background: #e4f4ec; color: #238366; }
+.pill.orange { background: #fff0da; color: #ac6c20; }
+.pill.red { background: #ffe9e6; color: #b74c42; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; }
+
+th {
+  color: var(--muted);
+  font-weight: 650;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+th, td { padding: 13px 10px; border-bottom: 1px solid var(--line); }
+td { vertical-align: middle; }
+
+.split {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+
+.total {
+  font-size: 25px;
+  font-weight: 850;
+  color: var(--brown);
+}
+
+/* SO DO BAN */
+.table-grid {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 15px;
+}
+
+.table-box {
+  min-height: 127px;
+  background: white;
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  justify-content: space-between;
+}
+
+.table-box:hover {
+  border-color: #a27856;
+  transform: translateY(-2px);
+}
+
+.table-box.busy {
+  background: #fff7eb;
+  border-color: #ebc999;
+}
+
+.table-box b { font-size: 19px; }
+
+.table-box .bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* BAN HANG */
+.pos {
+  display: grid;
+  grid-template-columns: minmax(0,1.55fr) minmax(315px,.85fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 13px;
+}
+
+.product {
+  padding: 15px;
+  min-height: 135px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.product:hover {
+  border-color: #a27856;
+  background: #fffaf4;
+}
+
+.emoji { font-size: 29px; }
+.product .price { font-weight: 800; color: var(--brown); margin-top: auto; }
+
+.filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.filter {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+}
+
+.filter.active {
+  background: var(--brown);
+  border-color: var(--brown);
+  color: white;
+}
+
+.order-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.order-line b { display: block; margin-bottom: 6px; }
+.order-line small { color: var(--muted); }
+.qty { display: flex; gap: 7px; align-items: center; }
+
+.qty button {
+  height: 28px;
+  width: 28px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 7px;
+}
+
+.receipt { position: sticky; top: 20px; }
+
+.receipt-head {
+  padding-bottom: 15px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 8px;
+}
+
+.receipt-bottom { padding-top: 20px; }
+.receipt-bottom .split { margin-bottom: 12px; }
+
+.receipt-bottom .actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 17px;
+}
+
+.receipt-bottom .actions .btn { width: 100%; }
+
+/* QUAN LY DU LIEU VA BAO CAO */
+.data-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 15px;
+}
+
+.chart {
+  height: 215px;
+  display: flex;
+  align-items: end;
+  justify-content: space-around;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+}
+
+.bar-area {
+  height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bar {
+  width: min(50px,85%);
+  background: linear-gradient(180deg,#c39b75,#785039);
+  border-radius: 9px 9px 0 0;
+  min-height: 4px;
+}
+
+.bar-area small { color: var(--muted); font-size: 11px; }
+
+.notice {
+  background: #fff4de;
+  border: 1px solid #f3dfb8;
+  border-radius: 13px;
+  padding: 14px;
+  color: #7a582c;
+  margin-bottom: 16px;
+}
+
+.tag {
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  background: #f2ece4;
+  padding: 5px 8px;
+}
+
+/* POPUP */
+.modal-cover {
+  position: fixed;
+  inset: 0;
+  background: #221811a8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 99;
+}
+
+.modal {
+  width: min(490px,100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: white;
+  border-radius: 19px;
+  padding: 25px;
+  box-shadow: 0 25px 90px #0004;
+}
+
+.modal h2 { margin: 0 0 18px; }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 20px;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  background: #284936;
+  color: #fff;
+  padding: 15px 20px;
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+  z-index: 100;
+  max-width: 360px;
+}
+
+.toast.error { background: #a84942; }
+
+/* TUONG THICH MAN HINH */
+@media (max-width:1150px) {
+  .stats { grid-template-columns: repeat(2,1fr); }
+  .table-grid { grid-template-columns: repeat(3,1fr); }
+  .product-grid { grid-template-columns: repeat(2,1fr); }
+  .two { grid-template-columns: 1fr; }
+  .sidebar { width: 218px; min-width: 218px; }
+}
+
+@media (max-width:760px) {
+  .login { grid-template-columns: 1fr; }
+  .login-brand { padding: 38px 27px; }
+  .login-brand h1 { font-size: 32px; margin: 15px 0 7px; }
+  .login-brand p { font-size: 14px; }
+  .coffee-art { display: none; }
+  .login-form { padding: 35px 20px; }
+  .layout { display: block; }
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    padding: 11px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow: auto;
+    gap: 5px;
+  }
+  .sidebar .brand-logo, .sidebar-bottom { display: none; }
+  .nav {
+    white-space: nowrap;
+    padding: 10px 12px;
+    font-size: 12px;
+    width: auto;
+  }
+  .nav-icon { font-size: 16px; width: auto; }
+  .topbar { padding: 0 17px; height: 63px; }
+  .topbar .user { font-size: 11px; }
+  .content { padding: 20px 15px 35px; }
+  .heading { align-items: flex-start; flex-direction: column; }
+  .heading h1 { font-size: 24px; }
+  .stats { gap: 10px; }
+  .stat { padding: 17px; }
+  .stat .value { font-size: 21px; }
+  .card { padding: 17px; }
+  .table-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .table-box { min-height: 108px; padding: 13px; }
+  .pos { grid-template-columns: 1fr; }
+  .receipt { position: static; }
+  .product-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .product { min-height: 124px; }
+  .data-toolbar { align-items: start; flex-direction: column; }
+  .actions { width: 100%; }
+  .actions .btn { flex: 1; }
+  .chart { gap: 4px; }
+}
+
+@media (max-width:390px) {
+  .product-grid { grid-template-columns: 1fr 1fr; }
+  .product { padding: 10px; }
+  .stat .value { font-size: 19px; }
+  .sidebar { padding: 7px; }
+}
