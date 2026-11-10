@@ -962,48 +962,105 @@
   // =====================================================
 
   function tablesPage() {
-    const busy = db.tables.filter(
-      table => getOpenOrder(table.id)
-    ).length;
 
+const busy = db.tables.filter(
+  table => table.status === "occupied"
+).length;
+
+const available = db.tables.filter(
+  table => table.status === "available"
+).length;
+
+
+   
     const content = db.tables.map(table => {
       const order = getOpenOrder(table.id);
 
+      const statusInfo = {
+        available: ["Bàn trống", "green"],
+        occupied: ["Đang phục vụ", "orange"],
+        reserved: ["Đã đặt trước", "orange"],
+        maintenance: ["Đang bảo trì", "red"]
+      };
+
+      const [statusText, statusColor] =
+        statusInfo[table.status] || ["Không xác định", ""];
+
       return `
-        <button
-          class="table-box ${order ? "busy" : ""}"
-          data-table="${escapeHTML(table.id)}">
+        <div class="table-box ${table.status === "occupied" ? "busy" : ""}">
 
           <div class="split">
             <b>${escapeHTML(table.id)}</b>
             <span>🪑 ${table.seats} chỗ</span>
           </div>
 
+          <div class="muted">
+            ${escapeHTML(table.name || table.id)}
+          </div>
+
           <div class="bottom">
-
-            ${pill(
-              order ? "Đang phục vụ" : "Bàn trống",
-              order ? "orange" : "green"
-            )}
-
-            <span>→</span>
+            ${pill(statusText, statusColor)}
           </div>
 
           ${order
             ? `<small>${money(calculateTotal(order.items))}</small>`
             : ""}
 
-        </button>
+          <div class="actions">
+            <button
+              type="button"
+              class="btn"
+              data-edit-table="${escapeHTML(table.id)}">
+              ✏️ Sửa bàn
+            </button>
+
+<button
+  type="button"
+  class="btn"
+  data-status-table="${escapeHTML(table.id)}">
+  🔄 Đổi trạng thái
+</button>
+
+<button
+  type="button"
+  class="btn"
+  data-delete-table="${escapeHTML(table.id)}">
+  🗑️ Xóa bàn
+</button>
+
+            
+
+            <button
+              type="button"
+              class="btn"
+              data-table="${escapeHTML(table.id)}">
+              Chọn bàn →
+            </button>
+          </div>
+
+        </div>
       `;
     }).join("");
 
+
+
     return heading(
       "Quản lý bàn",
-      `${db.tables.length - busy} bàn trống · ${busy} bàn đang phục vụ`,
-      canManageOrders()
-        ? button("🛒 Tạo đơn mới", "new-order", "primary")
-        : ""
+`${available} bàn trống · ${busy} bàn đang phục vụ`,
+      `
+        <button
+          type="button"
+          class="btn primary"
+          data-action="add-table">
+          + Thêm bàn
+        </button>
+
+        ${canManageOrders()
+          ? button("🛒 Tạo đơn mới", "new-order", "primary")
+          : ""}
+      `
     ) + `
+
 
       <div class="table-grid">
         ${content}
@@ -1097,7 +1154,30 @@
     `;
   }
 
-  function performTableAction(mode) {
+async function updateTableStatus(tableId, status) {
+  const response = await fetch(
+    `${API_URL}/tables/${encodeURIComponent(tableId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ status })
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result.error || `Không thể cập nhật bàn ${tableId}`
+    );
+  }
+
+  return result;
+}
+
+async function performTableAction(mode) {
     if (!checkOrderPermission()) return;
 
     const sourceId =
@@ -1124,34 +1204,62 @@
       return;
     }
 
-    if (mode === "transfer") {
-      if (destination) {
-        notify(
-          "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
-          true
-        );
-        return;
-      }
 
-      source.tableId = destinationId;
-      source.updatedAt = now();
+if (mode === "transfer") {
+  if (destination) {
+    notify(
+      "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
+      true
+    );
+    return;
+  }
 
-      if (state.tableId === sourceId) {
-        state.tableId = destinationId;
-        loadCart();
-      }
+  const targetTable = db.tables.find(
+    table => table.id === destinationId
+  );
 
-      saveDatabase();
-      render();
+  if (!targetTable || targetTable.status !== "available") {
+    notify("Bàn đích không ở trạng thái bàn trống.", true);
+    return;
+  }
 
-      notify(
-        `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
-      );
+  try {
+    // Cập nhật trạng thái trong SQL Server
+    await updateTableStatus(destinationId, "occupied");
 
-      return;
+    // Chuyển đơn hàng sang bàn đích
+    source.tableId = destinationId;
+    source.updatedAt = now();
+
+    // Giải phóng bàn nguồn nếu không còn đơn
+    if (!getOpenOrder(sourceId)) {
+      await updateTableStatus(sourceId, "available");
     }
 
-    if (mode === "merge") {
+    if (state.tableId === sourceId) {
+      state.tableId = destinationId;
+    }
+
+    loadCart();
+    saveDatabase();
+
+    await loadTablesFromSQL();
+
+    notify(
+      `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
+    );
+
+  } catch (error) {
+    console.error("Lỗi chuyển bàn:", error);
+    notify(
+      error.message || "Không thể cập nhật trạng thái bàn.",
+      true
+    );
+  }
+
+  return;
+}
+if (mode === "merge") {
       if (!destination) {
         notify(
           "Bàn đích chưa có đơn hàng để gộp.",
@@ -1179,6 +1287,24 @@
       source.mergedAt = now();
 
       destination.updatedAt = now();
+            // Đồng bộ trạng thái bàn với SQL Server
+      try {
+        await updateTableStatus(destinationId, "occupied");
+
+        if (!getOpenOrder(sourceId)) {
+          await updateTableStatus(sourceId, "available");
+        }
+      } catch (error) {
+        console.error("Lỗi cập nhật trạng thái khi gộp bàn:", error);
+        saveDatabase();
+        await loadTablesFromSQL();
+        notify(
+          "Đơn đã gộp nhưng cập nhật trạng thái SQL thất bại: " +
+          error.message,
+          true
+        );
+        return;
+      }
 
       if (
         state.tableId === sourceId ||
@@ -1189,7 +1315,7 @@
       }
 
       saveDatabase();
-      render();
+      await loadTablesFromSQL();
 
       notify(
         `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
@@ -2021,6 +2147,128 @@
 
     let title = "";
     let content = "";
+    if (modal.type === "table") {
+      title = "Thêm bàn mới";
+
+      content = `
+        <form id="tableForm">
+          <div class="field">
+            <label>Mã bàn</label>
+            <input
+              name="table_id"
+              maxlength="10"
+              placeholder="Ví dụ: B14"
+              required>
+          </div>
+
+          <div class="field">
+            <label>Tên bàn</label>
+            <input
+              name="table_name"
+              maxlength="100"
+              placeholder="Ví dụ: Bàn VIP 14"
+              required>
+          </div>
+
+          <div class="field">
+            <label>Số ghế</label>
+            <input
+              name="seats"
+              type="number"
+              min="1"
+              value="4"
+              required>
+          </div>
+
+          ${formButtons("Lưu bàn")}
+        </form>
+      `;
+    }
+
+    // POPUP SUA BAN
+    if (modal.type === "edit-table") {
+      const table = db.tables.find(
+        item => item.id === modal.tableId
+      );
+
+      if (!table) return "";
+
+      title = "Sửa thông tin bàn";
+
+      content = `
+        <form id="editTableForm">
+          <div class="field">
+            <label>Mã bàn</label>
+            <input
+              value="${escapeHTML(table.id)}"
+              disabled>
+          </div>
+
+          <div class="field">
+            <label>Tên bàn</label>
+            <input
+              name="table_name"
+              maxlength="100"
+              value="${escapeHTML(table.name)}"
+              required>
+          </div>
+
+          <div class="field">
+            <label>Số ghế</label>
+            <input
+              name="seats"
+              type="number"
+              min="1"
+              value="${table.seats}"
+              required>
+          </div>
+
+          ${formButtons("Lưu thay đổi")}
+        </form>
+      `;
+    }
+
+    // POPUP DOI TRANG THAI BAN
+    if (modal.type === "status-table") {
+      const table = db.tables.find(
+        item => item.id === modal.tableId
+      );
+
+      if (!table) return "";
+
+      title = "Đổi trạng thái bàn " + table.id;
+
+      content = `
+        <form id="statusTableForm">
+          <div class="field">
+            <label>Trạng thái bàn</label>
+
+            <select name="status" required>
+              <option value="available" ${table.status === "available" ? "selected" : ""}>
+                Bàn trống
+              </option>
+
+              <option value="occupied" ${table.status === "occupied" ? "selected" : ""}>
+                Đang phục vụ
+              </option>
+
+              <option value="reserved" ${table.status === "reserved" ? "selected" : ""}>
+                Đã đặt trước
+              </option>
+
+              <option value="maintenance" ${table.status === "maintenance" ? "selected" : ""}>
+                Đang bảo trì
+              </option>
+            </select>
+          </div>
+
+          ${formButtons("Lưu trạng thái")}
+        </form>
+      `;
+    }
+
+
+
 
     // THEM / SUA MON
     if (modal.type === "product") {
@@ -2415,15 +2663,136 @@
   // 21. XU LY SU KIEN CLICK
   // =====================================================
 
-  app.addEventListener("click", event => {
+app.addEventListener("click", async event => {
+
+    // MO POPUP THEM BAN
+    const addTableButton = event.target.closest(
+      '[data-action="add-table"]'
+    );
+
+    if (addTableButton) {
+      if (!checkManager()) return;
+
+      openModal("table");
+      return;
+    }
+
+
     const target = event.target.closest(
       "[data-action], [data-page], [data-table], " +
+      "[data-edit-table], [data-status-table], [data-delete-table], " +
       "[data-cat], [data-prod], [data-qty], " +
       "[data-edit-product], [data-stock], " +
       "[data-edit-employee], [data-period]"
     );
 
+
     if (!target) return;
+
+    // XOA MEM BAN TRONG SQL SERVER
+    if (target.dataset.deleteTable) {
+      if (!checkManager()) return;
+
+      const tableId = target.dataset.deleteTable;
+
+      const table = db.tables.find(
+        item => item.id === tableId
+      );
+
+      if (!table) {
+        notify("Không tìm thấy bàn!", true);
+        return;
+      }
+
+      // Khong cho xoa ban dang phuc vu
+      if (
+        table.status === "occupied" ||
+        getOpenOrder(tableId)
+      ) {
+        notify("Không thể xóa bàn đang phục vụ!", true);
+        return;
+      }
+
+      const confirmed = confirm(
+        `Bạn có chắc muốn xóa ${table.name || table.id} không?`
+      );
+
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch(
+          `${API_URL}/tables/${encodeURIComponent(tableId)}`,
+          {
+            method: "DELETE"
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Không thể xóa bàn."
+          );
+        }
+
+        await loadTablesFromSQL();
+
+        notify("Xóa bàn thành công!");
+
+      } catch (error) {
+        console.error("Lỗi xóa bàn:", error);
+        notify(error.message, true);
+      }
+
+      return;
+    }
+
+
+    // MO POPUP DOI TRANG THAI BAN
+    if (target.dataset.statusTable) {
+      if (!checkManager()) return;
+
+      const table = db.tables.find(
+        item => item.id === target.dataset.statusTable
+      );
+
+      if (!table) {
+        notify("Không tìm thấy bàn!", true);
+        return;
+      }
+
+      state.modal = {
+        type: "status-table",
+        tableId: table.id
+      };
+
+      render();
+      return;
+    }
+
+
+    // MO POPUP SUA BAN
+    if (target.dataset.editTable) {
+      if (!checkManager()) return;
+
+      const table = db.tables.find(
+        item => item.id === target.dataset.editTable
+      );
+
+      if (!table) {
+        alert("Không tìm thấy bàn cần sửa!");
+        return;
+      }
+
+      state.modal = {
+        type: "edit-table",
+        tableId: table.id
+      };
+
+      render();
+      return;
+    }
+
 
     // CHUYEN TRANG
     if (target.dataset.page) {
@@ -2674,6 +3043,205 @@
   // =====================================================
 
   app.addEventListener("submit", async event => {
+
+    // LUU TRANG THAI BAN VAO SQL SERVER
+    if (event.target.id === "statusTableForm") {
+      event.preventDefault();
+
+      if (!checkManager()) return;
+
+      const tableId = state.modal?.tableId;
+
+      if (!tableId) {
+        notify("Không tìm thấy mã bàn!", true);
+        return;
+      }
+
+      const formData = new FormData(event.target);
+      const status = String(formData.get("status") || "");
+
+      const validStatuses = [
+        "available",
+        "occupied",
+        "reserved",
+        "maintenance"
+      ];
+
+      if (!validStatuses.includes(status)) {
+        notify("Trạng thái bàn không hợp lệ!", true);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_URL}/tables/${encodeURIComponent(tableId)}/status`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ status })
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Không thể đổi trạng thái bàn."
+          );
+        }
+
+        state.modal = null;
+
+        await loadTablesFromSQL();
+
+        notify("Đổi trạng thái bàn thành công!");
+
+      } catch (error) {
+        console.error("Lỗi đổi trạng thái bàn:", error);
+        notify(error.message, true);
+      }
+
+      return;
+    }
+
+
+    // SUA THONG TIN BAN TRONG SQL SERVER
+    if (event.target.id === "editTableForm") {
+      event.preventDefault();
+
+      if (!checkManager()) return;
+
+      const tableId = state.modal?.tableId;
+
+      if (!tableId) {
+        alert("Không tìm thấy mã bàn cần sửa!");
+        return;
+      }
+
+      const formData = new FormData(event.target);
+
+      const table_name = String(
+        formData.get("table_name") || ""
+      ).trim();
+
+      const seats = Number(formData.get("seats"));
+
+      if (
+        !table_name ||
+        table_name.length > 100 ||
+        !Number.isInteger(seats) ||
+        seats <= 0
+      ) {
+        alert("Tên bàn hoặc số ghế không hợp lệ!");
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_URL}/tables/${encodeURIComponent(tableId)}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              table_name,
+              seats
+            })
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Không thể sửa bàn."
+          );
+        }
+
+        state.modal = null;
+
+        await loadTablesFromSQL();
+
+        alert("Cập nhật bàn thành công!");
+
+      } catch (error) {
+        console.error("Lỗi sửa bàn:", error);
+        alert(error.message);
+      }
+
+      return;
+    }
+
+
+    // THEM BAN VAO SQL SERVER
+    if (event.target.id === "tableForm") {
+      event.preventDefault();
+
+      if (!checkManager()) return;
+
+      const form = event.target;
+      const formData = new FormData(form);
+
+      const table_id = String(
+        formData.get("table_id") || ""
+      ).trim().toUpperCase();
+
+      const table_name = String(
+        formData.get("table_name") || ""
+      ).trim();
+
+      const seats = Number(formData.get("seats"));
+
+      if (
+        !table_id ||
+        table_id.length > 10 ||
+        !table_name ||
+        table_name.length > 100 ||
+        !Number.isInteger(seats) ||
+        seats <= 0
+      ) {
+        notify("Thông tin bàn không hợp lệ.", true);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_URL}/tables`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            table_id,
+            table_name,
+            seats
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Không thể thêm bàn."
+          );
+        }
+
+        state.modal = null;
+
+        await loadTablesFromSQL();
+
+        notify("Thêm bàn thành công!");
+
+      } catch (error) {
+        console.error("Lỗi thêm bàn:", error);
+        notify(error.message, true);
+      }
+
+      return;
+    }
+
     const form = event.target;
 
     if (!(form instanceof HTMLFormElement)) {
