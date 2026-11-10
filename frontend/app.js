@@ -265,6 +265,14 @@
   let db = loadDatabase();
   let employees = [];
   let employeeError = "";
+  let report = null;
+  let reportError = "";
+  const todayISO = () => dateKey(new Date());
+  const weekAgoISO = () => dateKey(new Date(Date.now() - 6 * 86400000));
+  let reportFrom = weekAgoISO();
+  let reportTo = todayISO();
+  let reportGroup = "day";
+
   async function managerRequest(path, options = {}) {
     const response = await fetch(`${API_URL}${path}`, {
       ...options,
@@ -282,6 +290,14 @@
     try { employees = await managerRequest("/employees"); }
     catch (error) { employeeError = error.message; employees = []; }
     if (state.page === "employees") render();
+  }
+
+  async function loadReport() {
+    reportError = "";
+    try {
+      report = await managerRequest(`/reports?from=${reportFrom}&to=${reportTo}&groupBy=${reportGroup}`);
+    } catch (error) { reportError = error.message; report = null; }
+    if (state.page === "reports") render();
   }
 
   function saveDatabase() {
@@ -600,6 +616,7 @@
     state.page = page;
     render();
     if (page === "employees") loadEmployees();
+    if (page === "reports") loadReport();
   }
 
   function checkManager() {
@@ -1881,101 +1898,32 @@
   // =====================================================
 
   function reportsPage() {
-    const today = dateKey(new Date());
-
-    const invoices = db.invoices.filter(invoice => {
-      if (state.period === "all") return true;
-
-      if (state.period === "today") {
-        return dateKey(invoice.date) === today;
-      }
-
-      if (state.period === "week") {
-        return new Date(invoice.date).getTime() >=
-          Date.now() - 7 * 86400000;
-      }
-
-      return true;
-    });
-
-    const revenue = invoices.reduce(
-      (total, invoice) => total + invoice.total,
-      0
-    );
-
-    const average = invoices.length
-      ? Math.round(revenue / invoices.length)
-      : 0;
-
-    const periodButtons = [
-      ["today", "Hôm nay"],
-      ["week", "7 ngày"],
-      ["all", "Tất cả"]
-    ].map(item => `
-      <button
-        class="filter ${
-          state.period === item[0] ? "active" : ""
-        }"
-        data-period="${item[0]}">
-
-        ${item[1]}
-
-      </button>
-    `).join("");
-
-    return heading(
-      "Báo cáo thống kê",
-      "Phân tích hoạt động kinh doanh của quán"
-    ) + `
-
-      <div class="filters">
-        ${periodButtons}
+    return heading("Báo cáo thống kê", "Dữ liệu từ hóa đơn đã thanh toán") + `
+      <form id="reportFilter" class="filters">
+        <label>Từ ngày <input type="date" name="from" value="${reportFrom}" required></label>
+        <label>Đến ngày <input type="date" name="to" value="${reportTo}" required></label>
+        <label>Nhóm theo <select name="groupBy">
+          ${[["day","Ngày"],["week","Tuần"],["month","Tháng"]].map(([value,label]) =>
+            `<option value="${value}" ${reportGroup === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select></label><button class="btn primary" type="submit">Xem báo cáo</button>
+      </form>
+      ${reportError ? `<div class="notice">${escapeHTML(reportError)}</div>` : ""}
+      ${report ? `<div class="grid stats">
+        ${statsCard("Doanh thu", money(report.revenue), "Trong khoảng đã chọn")}
+        ${statsCard("Số hóa đơn", report.invoiceCount, "Đã thanh toán")}
+        ${statsCard("Trung bình / hóa đơn", money(report.average), "Trong khoảng đã chọn")}
       </div>
-
-      <div class="grid stats">
-
-        ${statsCard(
-          "Doanh thu",
-          money(revenue),
-          "Doanh thu trong kỳ"
-        )}
-
-        ${statsCard(
-          "Số hóa đơn",
-          invoices.length,
-          "Giao dịch thành công"
-        )}
-
-        ${statsCard(
-          "Trung bình / hóa đơn",
-          money(average),
-          "Giá trị trung bình"
-        )}
-
-        ${statsCard(
-          "Số bàn",
-          db.tables.length,
-          "Tổng số bàn"
-        )}
-
-      </div>
-
-      <div class="card">
-        <h2>📈 Biểu đồ doanh thu 7 ngày</h2>
-        ${revenueChart(7)}
-      </div>
-
-      <div class="card" style="margin-top:20px">
-        <h2>📋 Chi tiết hóa đơn</h2>
-
-        ${invoiceTable(
-          [...invoices].sort(
-            (a, b) => new Date(b.date) - new Date(a.date)
-          )
-        )}
-
-      </div>
-    `;
+      <div class="card"><h2>Doanh thu theo ${reportGroup === "day" ? "ngày" : reportGroup === "week" ? "tuần" : "tháng"}</h2>
+        ${report.timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Kỳ</th><th>Số hóa đơn</th><th>Doanh thu</th></tr></thead><tbody>
+          ${report.timeline.map(row => `<tr><td>${escapeHTML(row.period)}</td><td>${row.invoiceCount}</td><td>${money(row.revenue)}</td></tr>`).join("")}
+        </tbody></table></div>` : '<div class="empty">Không có hóa đơn trong khoảng thời gian này.</div>'}
+      </div><div class="card" style="margin-top:20px"><h2>Món bán chạy</h2>
+        ${report.topProducts.length ? `<div class="table-wrap"><table><thead><tr><th>Món</th><th>Số lượng</th></tr></thead><tbody>
+          ${report.topProducts.map(row => `<tr><td>${escapeHTML(row.name)}</td><td>${row.quantity}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">Chưa có món đã bán.</div>'}
+      </div><div class="card" style="margin-top:20px"><h2>Tồn kho hiện tại</h2>
+        <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn hiện tại</th></tr></thead><tbody>
+          ${report.currentStock.map(row => `<tr><td>${escapeHTML(row.name)}</td><td>${row.quantity} ${escapeHTML(row.unit)}</td></tr>`).join("") || '<tr><td colspan="2">Chưa có nguyên liệu.</td></tr>'}
+        </tbody></table></div></div>` : '<div class="empty">Chọn khoảng thời gian để tải báo cáo.</div>'}`;
   }
 
   // =====================================================
@@ -2612,6 +2560,19 @@
     const values = Object.fromEntries(
       new FormData(form).entries()
     );
+
+    if (form.id === "reportFilter") {
+      if (!checkManager()) return;
+      if (!values.from || !values.to || values.from > values.to) {
+        notify("Khoảng ngày không hợp lệ.", true);
+        return;
+      }
+      reportFrom = values.from;
+      reportTo = values.to;
+      reportGroup = values.groupBy;
+      await loadReport();
+      return;
+    }
 
     // -----------------------------------------
     // DANG NHAP SQL SERVER
