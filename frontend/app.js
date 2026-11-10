@@ -282,6 +282,26 @@ function isAdmin() {
   }
 
   let db = loadDatabase();
+  let employees = [];
+  let employeeError = "";
+  async function managerRequest(path, options = {}) {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`,
+        ...(options.headers || {}) }
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Yêu cầu thất bại.");
+    return data;
+  }
+
+  async function loadEmployees() {
+    employeeError = "";
+    try { employees = await managerRequest("/employees"); }
+    catch (error) { employeeError = error.message; employees = []; }
+    if (state.page === "employees") render();
+  }
 
   function saveDatabase() {
     localStorage.setItem(
@@ -604,15 +624,15 @@ function isManager() {
       return;
     }
 
-    
-state.page = page;
-render();
+    state.page = page;
+    render();
 
-// Tu dong tai danh sach khi Admin mo trang
-if (page === "accounts" && isAdmin()) {
-    loadAccountsFromSQL();
-}
+    // Tu dong tai danh sach khi Admin mo trang
+    if (page === "accounts" && isAdmin()) {
+      loadAccountsFromSQL();
+    }
 
+    if (page === "employees") loadEmployees();
   }
 
   function checkManager() {
@@ -2155,68 +2175,41 @@ if (mode === "merge") {
   // =====================================================
 
   function employeesPage() {
-    const rows = db.staff.map(staff => `
+    const rows = employees.map(staff => `
       <tr>
-
-        <td>
-          <b>${escapeHTML(staff.name)}</b>
-        </td>
-
-        <td>${escapeHTML(staff.username)}</td>
-
-        <td>${roleName(staff.role)}</td>
-
-        <td>
-          ${pill(
-            staff.active ? "Hoạt động" : "Đã khóa",
-            staff.active ? "green" : "red"
-          )}
-        </td>
-
-        <td>
-          <button
-            type="button"
-            class="btn small"
-            data-edit-employee="${escapeHTML(staff.id)}">
-            Chỉnh sửa
-          </button>
-        </td>
-
+        <td>${escapeHTML(staff.employee_id)}</td>
+        <td><b>${escapeHTML(staff.full_name)}</b></td>
+        <td>${escapeHTML(staff.phone || "—")}</td>
+        <td>${escapeHTML(staff.position)}</td>
+        <td>${escapeHTML(staff.username || "Chưa cấp")}</td>
+        <td>${escapeHTML(staff.role ? roleName(normalizeRole(staff.role)) : "—")}</td>
+        <td>${pill(staff.is_active && staff.account_active !== false ? "Hoạt động" : "Đã khóa",
+          staff.is_active && staff.account_active !== false ? "green" : "red")}</td>
+        <td><button type="button" class="btn small"
+          data-edit-employee="${escapeHTML(staff.employee_id)}">Chỉnh sửa</button></td>
       </tr>
     `).join("");
-
     return heading(
       "Quản lý nhân viên",
-      `${db.staff.length} nhân viên trong hệ thống`,
-      button(
-        "➕ Thêm nhân viên",
-        "add-employee",
-        "primary"
-      )
+      `${employees.length} nhân viên trong hệ thống`,
+      button("➕ Thêm nhân viên", "add-employee", "primary")
     ) + `
-
+      ${employeeError ? `<div class="notice">${escapeHTML(employeeError)}</div>` : ""}
       <div class="card">
-
         <div class="table-wrap">
-
           <table>
-
             <thead>
               <tr>
-                <th>Nhân viên</th>
+                <th>Mã</th><th>Nhân viên</th><th>Số điện thoại</th><th>Chức vụ</th>
                 <th>Tài khoản</th>
                 <th>Vai trò</th>
                 <th>Trạng thái</th>
                 <th>Thao tác</th>
               </tr>
             </thead>
-
-            <tbody>${rows}</tbody>
-
+            <tbody>${rows || '<tr><td colspan="8">Chưa có nhân viên.</td></tr>'}</tbody>
           </table>
-
         </div>
-
       </div>
     `;
   }
@@ -2849,14 +2842,7 @@ if (mode === "merge") {
 
     // THEM / SUA NHAN VIEN
     else if (modal.type === "employee") {
-      const staff = db.staff.find(
-        item => item.id === modal.id
-      ) || {
-        name: "",
-        username: "",
-        role: "service",
-        active: true
-      };
+      const staff = employees.find(item => item.employee_id === modal.id) || {};
 
       title = modal.id
         ? "Chỉnh sửa nhân viên"
@@ -2864,86 +2850,26 @@ if (mode === "merge") {
 
       content = `
         <form id="employeeForm">
-
-          <div class="field">
-            <label>Họ tên</label>
-
-            <input
-              name="name"
-              required
-              value="${escapeHTML(staff.name)}">
-          </div>
-
-          <div class="field">
-            <label>Tên đăng nhập</label>
-
-            <input
-              name="username"
-              required
-              value="${escapeHTML(staff.username)}">
-          </div>
-
-          <div class="field">
-
-            <label>
-              Mật khẩu
-              ${modal.id
-                ? "(để trống nếu không thay đổi)"
-                : ""}
-            </label>
-
-            <input
-              name="password"
-              type="password"
-              autocomplete="new-password"
-              ${modal.id ? "" : "required"}>
-          </div>
-
-          <div class="field">
-            <label>Vai trò</label>
-
-            <select name="role">
-
-              ${Object.keys(permissions).map(role => `
-                <option
-                  value="${role}"
-                  ${staff.role === role ? "selected" : ""}>
-
-                  ${roleName(role)}
-
-                </option>
-              `).join("")}
-
-            </select>
-          </div>
-
-          <div class="field">
-            <label>Trạng thái</label>
-
-            <select name="active">
-
-              <option
-                value="1"
-                ${staff.active ? "selected" : ""}>
-                Hoạt động
-              </option>
-
-              <option
-                value="0"
-                ${!staff.active ? "selected" : ""}>
-                Khóa
-              </option>
-
-            </select>
-          </div>
-
-          <p class="muted">
-            Chức năng này hiện quản lý dữ liệu demo.
-            Tài khoản SQL Server cần được tạo qua backend.
-          </p>
-
+          <div class="field"><label>Họ tên</label><input name="full_name" required maxlength="100" value="${escapeHTML(staff.full_name || "")}"></div>
+          <div class="field"><label>Số điện thoại</label><input name="phone" maxlength="15" value="${escapeHTML(staff.phone || "")}"></div>
+          <div class="field"><label>Email</label><input name="email" type="email" maxlength="100" value="${escapeHTML(staff.email || "")}"></div>
+          <div class="field"><label>Chức vụ</label><input name="position" required maxlength="50" value="${escapeHTML(staff.position || "")}"></div>
+          <div class="field"><label>Tên đăng nhập (để trống nếu chưa cấp)</label><input name="username" maxlength="50" value="${escapeHTML(staff.username || "")}"></div>
+          <div class="field"><label>Mật khẩu ${staff.user_id ? "(để trống nếu giữ nguyên)" : "(ít nhất 12 ký tự nếu cấp tài khoản)"}</label>
+            <input name="password" type="password" autocomplete="new-password" minlength="12"></div>
+          <div class="field"><label>Vai trò</label><select name="role"><option value="">Chưa cấp</option>
+            ${[["manager","Quản lý"],["phucvu","Phục vụ"],["thungan","Thu ngân"],["kho","Nhân viên kho"]]
+              .map(([value,label]) => `<option value="${value}" ${staff.role === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select></div>
+          <div class="field"><label>Trạng thái nhân viên</label><select name="is_active">
+            <option value="1" ${staff.is_active !== false ? "selected" : ""}>Hoạt động</option>
+            <option value="0" ${staff.is_active === false ? "selected" : ""}>Ngừng hoạt động</option>
+          </select></div>
+          <div class="field"><label>Trạng thái tài khoản</label><select name="account_active">
+            <option value="1" ${staff.account_active !== false ? "selected" : ""}>Hoạt động</option>
+            <option value="0" ${staff.account_active === false ? "selected" : ""}>Khóa</option>
+          </select></div>
           ${formButtons("Lưu nhân viên")}
-
         </form>
       `;
     }
@@ -4182,80 +4108,31 @@ if (!Number.isFinite(currentStock) || currentStock < 0) {
     }
 
     // -----------------------------------------
-    // THEM / SUA NHAN VIEN DEMO
+    // THEM / SUA NHAN VIEN SQL SERVER
     // -----------------------------------------
 
     if (form.id === "employeeForm") {
       if (!checkManager()) return;
 
-      const staff = db.staff.find(
-        item => item.id === state.modal?.id
-      );
-
-      const username = String(
-        values.username || ""
-      ).trim();
-
-      const name = String(
-        values.name || ""
-      ).trim();
-
-      if (
-        !name ||
-        !username ||
-        (!staff && !values.password)
-      ) {
-        notify(
-          "Vui lòng nhập đầy đủ thông tin nhân viên.",
-          true
-        );
-        return;
-      }
-
-      const usernameExists = db.staff.some(
-        item =>
-          item.username === username &&
-          item.id !== staff?.id
-      );
-
-      if (usernameExists) {
-        notify(
-          "Tên đăng nhập đã tồn tại.",
-          true
-        );
-        return;
-      }
-
-      const data = {
-        name,
-        username,
-        role: values.role,
-        active: values.active === "1"
-      };
-
-      // Phan nhan vien nay van la demo.
-      // Khong luu mat khau vao localStorage.
-      // Tai khoan SQL Server phai duoc tao qua backend.
-
-      if (staff) {
-        Object.assign(staff, data);
-      } else {
-        db.staff.push({
-          id: createId("NV"),
-          ...data
+      const button = form.querySelector('button[type="submit"]');
+      if (button) button.disabled = true;
+      try {
+        const id = state.modal?.id;
+        await managerRequest(id ? `/employees/${encodeURIComponent(id)}` : "/employees", {
+          method: id ? "PUT" : "POST",
+          body: JSON.stringify({
+            full_name: values.full_name.trim(), phone: values.phone.trim(),
+            email: values.email.trim(), position: values.position.trim(),
+            username: values.username.trim(), password: values.password,
+            role: values.role, is_active: values.is_active === "1",
+            account_active: values.account_active === "1"
+          })
         });
-      }
-
-      saveDatabase();
-
-      state.modal = null;
-      render();
-
-      notify(
-        "Đã lưu thông tin nhân viên demo. " +
-        "Tài khoản SQL Server chưa thay đổi."
-      );
-
+        state.modal = null;
+        await loadEmployees();
+        notify("Đã lưu nhân viên.");
+      } catch (error) { notify(error.message, true); }
+      finally { if (button.isConnected) button.disabled = false; }
       return;
     }
   });

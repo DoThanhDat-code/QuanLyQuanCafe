@@ -9,6 +9,7 @@ const productRoutes = require("./routes/productRoutes");
 const tableRoutes = require("./routes/tableRoutes");
 const authRoutes = require("./routes/authRoutes");
 const recipeRoutes = require("./routes/recipeRoutes");
+const employeeRoutes = require("./routes/employeeRoutes");
 const app = express();
 const orderRoutes = require("./routes/orderRoutes");
 
@@ -28,6 +29,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/tables", tableRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/employees", employeeRoutes);
 
 const PORT = process.env.PORT || 3000;
 
