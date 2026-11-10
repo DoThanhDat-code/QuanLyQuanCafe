@@ -8,6 +8,7 @@ const { connectDB } = require("./config/db");
 const productRoutes = require("./routes/productRoutes");
 const tableRoutes = require("./routes/tableRoutes");
 const authRoutes = require("./routes/authRoutes");
+const employeeRoutes = require("./routes/employeeRoutes");
 const app = express();
 
 
@@ -23,6 +24,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/products", productRoutes);
 app.use("/api/tables", tableRoutes);
+app.use("/api/employees", employeeRoutes);
 
 const PORT = process.env.PORT || 3000;
 

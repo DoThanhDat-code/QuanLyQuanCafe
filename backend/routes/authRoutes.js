@@ -33,9 +33,11 @@ router.post("/login", async (req, res) => {
                     username,
                     password_hash,
                     role,
-                    is_active
-                FROM dbo.users
-                WHERE username = @username
+                    u.is_active,
+                    e.is_active AS employee_active
+                FROM dbo.users u
+                LEFT JOIN dbo.employees e ON e.employee_id = u.employee_id
+                WHERE u.username = @username
             `);
 
         const user = result.recordset[0];
@@ -43,6 +45,8 @@ router.post("/login", async (req, res) => {
         if (
             !user ||
             !user.is_active ||
+            user.employee_active === false ||
+            user.employee_active === 0 ||
             !(await bcrypt.compare(password, user.password_hash))
         ) {
             return res.status(401).json({
@@ -105,10 +109,12 @@ router.get("/me", async (req, res) => {
         const result = await pool.request()
             .input("id", sql.VarChar(10), decoded.userId)
             .query(`
-                SELECT user_id, username, role
-                FROM dbo.users
-                WHERE user_id = @id
-                  AND is_active = 1
+                SELECT u.user_id, u.username, u.role
+                FROM dbo.users u
+                LEFT JOIN dbo.employees e ON e.employee_id = u.employee_id
+                WHERE u.user_id = @id
+                  AND u.is_active = 1
+                  AND (e.employee_id IS NULL OR e.is_active = 1)
             `);
 
         const user = result.recordset[0];
