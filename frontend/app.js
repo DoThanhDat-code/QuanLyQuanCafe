@@ -74,6 +74,7 @@
     ["payments", "💳", "Thanh toán"],
     ["inventory", "📦", "Kho nguyên liệu"],
     ["employees", "👥", "Nhân viên"],
+    ["accounts", "🔐", "Quản lý tài khoản"],
     ["reports", "📈", "Báo cáo"]
   ];
 
@@ -105,13 +106,19 @@
     return roles[role] || role;
   }
 
-  const normalizeRole = role => ({
+  
+const normalizeRole = role => ({
     admin: "manager",
     manager: "manager",
     phucvu: "service",
     thungan: "cashier",
     kho: "stock"
-  }[role] || null);
+}[role] || null);
+
+function isAdmin() {
+    return authenticatedUser?.originalRole === "admin";
+}
+
 
   // =====================================================
   // 3. DU LIEU MAU
@@ -298,13 +305,16 @@
 
     userId = user.userId;
 
-    authenticatedUser = {
-      id: user.userId,
-      name: user.username,
-      username: user.username,
-      role,
-      active: true
-    };
+    
+authenticatedUser = {
+    id: user.userId,
+    name: user.username,
+    username: user.username,
+    role,
+    originalRole: user.role,
+    active: true
+};
+
   }
 
   function clearSession() {
@@ -495,15 +505,20 @@
     return currentUser()?.role === "manager";
   }
 
+  
   function hasPermission(page) {
     const account = currentUser();
 
     if (!account) return false;
 
-    return (
-      permissions[account.role]?.includes(page) || false
-    );
+    // Chi Admin duoc truy cap quan ly tai khoan
+    if (page === "accounts") {
+        return isAdmin();
+    }
+
+    return permissions[account.role]?.includes(page) || false;
   }
+
 
   function canManageOrders() {
     return [
@@ -577,8 +592,15 @@
       return;
     }
 
-    state.page = page;
-    render();
+    
+state.page = page;
+render();
+
+// Tu dong tai danh sach khi Admin mo trang
+if (page === "accounts" && isAdmin()) {
+    loadAccountsFromSQL();
+}
+
   }
 
   function checkManager() {
@@ -804,8 +826,176 @@
       ${modalHTML()}
     `;
   }
+let accountList = [];
+let accountLoading = false;
 
+
+async function loadAccountsFromSQL() {
+    if (!isAdmin()) return;
+
+    const token = sessionStorage.getItem(TOKEN_KEY);
+
+    if (!token) {
+        notify("Vui lòng đăng nhập lại.", true);
+        return;
+    }
+
+    accountLoading = true;
+
+    try {
+        const response = await fetch(`${API_URL}/accounts`, {
+            headers: {
+                Authorization: `Bearer ${token}`
+            }
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.error || "Không thể tải danh sách tài khoản."
+            );
+        }
+
+        accountList = result;
+
+    } catch (error) {
+        console.error("Lỗi tải danh sách tài khoản:", error);
+        notify(error.message, true);
+
+    } finally {
+        accountLoading = false;
+
+        if (state.page === "accounts" && isAdmin()) {
+            render();
+        }
+    }
+}
+function accountsPage() {
+    if (!isAdmin()) {
+        return heading(
+            "Không có quyền truy cập",
+            "Chỉ Admin được quản lý tài khoản."
+        );
+    }
+
+    // Chống chèn mã HTML từ dữ liệu tài khoản
+    const escapeAccountHTML = value =>
+        String(value ?? "").replace(/[&<>"']/g, char => ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;"
+        })[char]);
+
+    const roleNames = {
+        admin: "Admin",
+        manager: "Quản lý",
+        phucvu: "Phục vụ",
+        thungan: "Thu ngân",
+        kho: "Kho"
+    };
+
+    const rows = accountList.map((account, index) => {
+        const role = roleNames[account.role] || account.role;
+
+        const status = account.is_active
+            ? "🟢 Hoạt động"
+            : "🔴 Đã khóa";
+
+        const createdAt = account.created_at
+            ? new Date(account.created_at).toLocaleDateString("vi-VN")
+            : "—";
+
+        
+return `
+    <tr>
+        <td>${index + 1}</td>
+        <td>${escapeAccountHTML(account.username)}</td>
+        <td>${escapeAccountHTML(account.full_name || "Chưa liên kết")}</td>
+        <td>${escapeAccountHTML(role)}</td>
+        <td>${status}</td>
+        <td>${escapeAccountHTML(createdAt)}</td>
+        <td>
+            
+${account.role === "admin" ? "—" : `
+    <button
+        type="button"
+        class="btn small"
+        data-action="change-account-role"
+        data-account-id="${escapeAccountHTML(account.user_id)}">
+        ✏️ Đổi quyền
+    </button>
+
+    <button
+        type="button"
+        class="btn small"
+        data-action="toggle-account-status"
+        data-account-id="${escapeAccountHTML(account.user_id)}">
+        ${account.is_active
+            ? "🔒 Khóa"
+            : "🔓 Mở khóa"}
+    </button>
+`}
+
+        </td>
+    </tr>
+`;
+
+    }).join("");
+
+    return heading(
+        "Quản lý tài khoản",
+        "Danh sách tài khoản được lưu trong SQL Server"
+    ) + `
+        <div class="card">
+            <div class="split">
+                <h2>🔐 Danh sách tài khoản</h2>
+
+                <button
+                    type="button"
+                    class="btn primary"
+                    data-action="add-account">
+                    ➕ Tạo tài khoản mới
+                </button>
+            </div>
+
+            <div style="overflow-x:auto; margin-top:20px;">
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th>STT</th>
+                            <th>Tên đăng nhập</th>
+                            <th>Họ tên nhân viên</th>
+                            <th>Quyền</th>
+                            <th>Trạng thái</th>
+                            <th>Ngày tạo</th>
+                            <th>Thao tác</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        ${accountLoading
+                            ? '<tr><td colspan="7">Đang tải...</td></tr>'
+                            : rows || '<tr><td colspan="7">Chưa có dữ liệu. Bấm Làm mới để tải danh sách.</td></tr>'
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <button
+                type="button"
+                class="btn"
+                data-action="refresh-accounts"
+                style="margin-top:20px;">
+                🔄 Làm mới danh sách
+            </button>
+        </div>
+    `;
+}
   function pageContent() {
+
     const pages = {
       dashboard: dashboardPage,
       tables: tablesPage,
@@ -814,6 +1004,7 @@
       payments: paymentsPage,
       inventory: inventoryPage,
       employees: employeesPage,
+      accounts: accountsPage,
       reports: reportsPage
     };
 
@@ -2147,6 +2338,125 @@ if (mode === "merge") {
 
     let title = "";
     let content = "";
+
+    // POPUP TAO TAI KHOAN - CHI ADMIN
+    if (modal.type === "account") {
+        if (!isAdmin()) return "";
+
+        title = "Tạo tài khoản mới";
+
+        content = `
+            <form id="accountForm">
+
+                <div class="field">
+                    <label>Tên đăng nhập</label>
+                    <input
+                        name="username"
+                        type="text"
+                        minlength="3"
+                        maxlength="50"
+                        pattern="[A-Za-z0-9_]+"
+                        autocomplete="off"
+                        placeholder="Ví dụ: nhanvien05"
+                        required>
+                </div>
+
+                <div class="field">
+                    <label>Mật khẩu</label>
+                    <input
+                        name="password"
+                        type="password"
+                        minlength="12"
+                        maxlength="72"
+                        autocomplete="new-password"
+                        placeholder="Ít nhất 12 ký tự"
+                        required>
+                </div>
+
+                <div class="field">
+                    <label>Phân quyền</label>
+                    <select name="role" required>
+                        <option value="">-- Chọn quyền --</option>
+                        <option value="manager">Quản lý</option>
+                        <option value="phucvu">Nhân viên phục vụ</option>
+                        <option value="thungan">Thu ngân</option>
+                        <option value="kho">Nhân viên kho</option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>Mã nhân viên (không bắt buộc)</label>
+                    <input
+                        name="employee_id"
+                        type="text"
+                        maxlength="10"
+                        placeholder="Ví dụ: NV02">
+                </div>
+
+                ${formButtons("Tạo tài khoản")}
+
+            </form>
+        `;
+    }
+
+    // POPUP DOI QUYEN TAI KHOAN
+    if (modal.type === "account-role") {
+        if (!isAdmin()) return "";
+
+        const account = accountList.find(
+            item => item.user_id === modal.id
+        );
+
+        if (!account || account.role === "admin") {
+            return "";
+        }
+
+        const roleNames = {
+            manager: "Quản lý",
+            phucvu: "Nhân viên phục vụ",
+            thungan: "Thu ngân",
+            kho: "Nhân viên kho"
+        };
+
+        title = "Thay đổi quyền tài khoản";
+
+        const roleOptions = Object.entries(roleNames)
+            .map(([value, label]) => `
+                <option
+                    value="${value}"
+                    ${account.role === value ? "selected" : ""}>
+                    ${label}
+                </option>
+            `).join("");
+
+        content = `
+            <form id="accountRoleForm">
+                <div class="field">
+                    <label>Tên đăng nhập</label>
+                    <input
+                        type="text"
+                        value="${String(account.username).replace(/[&<>"']/g, c => ({
+                            "&": "&amp;",
+                            "<": "&lt;",
+                            ">": "&gt;",
+                            '"': "&quot;",
+                            "'": "&#39;"
+                        })[c])}"
+                        disabled>
+                </div>
+
+                <div class="field">
+                    <label>Quyền mới</label>
+                    <select name="role" required>
+                        ${roleOptions}
+                    </select>
+                </div>
+
+                ${formButtons("Lưu quyền")}
+            </form>
+        `;
+    }
+
     if (modal.type === "table") {
       title = "Thêm bàn mới";
 
@@ -3007,6 +3317,125 @@ app.addEventListener("click", async event => {
         }
         break;
 
+case "add-account":
+  if (!isAdmin()) {
+    notify("Chỉ Admin mới được tạo tài khoản.", true);
+    break;
+  }
+
+case "change-account-role": {
+    if (!isAdmin()) {
+        notify("Chi Admin moi duoc doi quyen.", true);
+        break;
+    }
+
+    const accountId = target.dataset.accountId;
+
+    const account = accountList.find(
+        item => item.user_id === accountId
+    );
+
+    if (!account || account.role === "admin") {
+        notify("Khong the thay doi quyen tai khoan nay.", true);
+        break;
+    }
+
+    openModal("account-role", accountId);
+    break;
+}
+
+case "toggle-account-status": {
+    if (!isAdmin()) {
+        notify("Chi Admin moi duoc khoa tai khoan.", true);
+        break;
+    }
+
+    const accountId = target.dataset.accountId;
+
+    const account = accountList.find(
+        item => item.user_id === accountId
+    );
+
+    if (!account || account.role === "admin") {
+        notify("Khong the thay doi tai khoan nay.", true);
+        break;
+    }
+
+    const newStatus = !Boolean(account.is_active);
+
+    const actionName = newStatus ? "mo khoa" : "khoa";
+
+    if (!confirm(
+        `Ban co chac muon ${actionName} tai khoan ${account.username}?`
+    )) {
+        break;
+    }
+
+    const token = sessionStorage.getItem(TOKEN_KEY);
+
+    if (!token) {
+        notify("Phien dang nhap da het han.", true);
+        break;
+    }
+
+    // Chan bam nhieu lan trong khi dang xu ly
+    const actionButton = target;
+    actionButton.disabled = true;
+
+    try {
+        const response = await fetch(
+            `${API_URL}/accounts/${encodeURIComponent(accountId)}/status`,
+            {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    is_active: newStatus
+                })
+            }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.error || "Khong the cap nhat trang thai."
+            );
+        }
+
+        await loadAccountsFromSQL();
+
+        notify(
+            newStatus
+                ? "Mo khoa tai khoan thanh cong!"
+                : "Khoa tai khoan thanh cong!"
+        );
+
+    } catch (error) {
+        console.error("Loi khoa/mo khoa tai khoan:", error);
+        notify(error.message, true);
+
+    } finally {
+        if (actionButton.isConnected) {
+            actionButton.disabled = false;
+        }
+    }
+
+    break;
+}
+
+case "refresh-accounts":
+    if (!isAdmin()) {
+        notify("Chi Admin duoc xem danh sach tai khoan.", true);
+        break;
+    }
+
+    loadAccountsFromSQL();
+    break;
+
+
       case "close-modal":
         if (
           target.classList.contains("modal-cover") &&
@@ -3319,6 +3748,170 @@ app.addEventListener("click", async event => {
       );
       return;
     }
+
+    
+    // ADMIN TAO TAI KHOAN MOI
+    if (form.id === "accountForm") {
+      if (!isAdmin()) {
+        notify("Chi Admin duoc tao tai khoan.", true);
+        return;
+      }
+
+      const token = sessionStorage.getItem(TOKEN_KEY);
+
+      if (!token) {
+        notify("Phien dang nhap da het. Hay dang nhap lai.", true);
+        return;
+      }
+
+      const username = String(values.username || "").trim();
+      const password = String(values.password || "");
+      const role = String(values.role || "");
+      const employee_id = String(values.employee_id || "").trim();
+
+      if (!/^[A-Za-z0-9_]{3,50}$/.test(username)) {
+        notify("Ten dang nhap phai co 3-50 ky tu.", true);
+        return;
+      }
+
+      if (password.length < 12 || password.length > 72) {
+        notify("Mat khau phai co 12-72 ky tu.", true);
+        return;
+      }
+
+      if (!["manager", "phucvu", "thungan", "kho"].includes(role)) {
+        notify("Vui long chon quyen hop le.", true);
+        return;
+      }
+
+      const submitButton = form.querySelector(
+        'button[type="submit"]'
+      );
+
+      if (submitButton) submitButton.disabled = true;
+
+      try {
+        const response = await fetch(`${API_URL}/accounts`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            username,
+            password,
+            role,
+            employee_id: employee_id || null
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error || "Khong the tao tai khoan."
+          );
+        }
+
+        state.modal = null;
+        render();
+
+        notify("Tao tai khoan thanh cong: " + username);
+
+      } catch (error) {
+        console.error("Loi tao tai khoan:", error);
+        notify(error.message, true);
+
+      } finally {
+        if (submitButton && submitButton.isConnected) {
+          submitButton.disabled = false;
+        }
+      }
+
+      return;
+    }
+
+    // ADMIN THAY DOI QUYEN TAI KHOAN
+    if (form.id === "accountRoleForm") {
+        if (!isAdmin()) {
+            notify("Chi Admin moi duoc doi quyen.", true);
+            return;
+        }
+
+        const accountId = state.modal?.id;
+        const newRole = String(values.role || "");
+
+        const allowedRoles = [
+            "manager",
+            "phucvu",
+            "thungan",
+            "kho"
+        ];
+
+        if (!accountId || !allowedRoles.includes(newRole)) {
+            notify("Thong tin phan quyen khong hop le.", true);
+            return;
+        }
+
+        const token = sessionStorage.getItem(TOKEN_KEY);
+
+        if (!token) {
+            notify("Phien dang nhap da het han.", true);
+            return;
+        }
+
+        const submitButton = form.querySelector(
+            'button[type="submit"]'
+        );
+
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+
+        try {
+            const response = await fetch(
+                `${API_URL}/accounts/${encodeURIComponent(accountId)}/role`,
+                {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        role: newRole
+                    })
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    result.error || "Khong the thay doi quyen."
+                );
+            }
+
+            state.modal = null;
+
+            await loadAccountsFromSQL();
+
+            render();
+
+            notify("Cap nhat quyen tai khoan thanh cong!");
+
+        } catch (error) {
+            console.error("Loi thay doi quyen:", error);
+            notify(error.message, true);
+
+        } finally {
+            if (submitButton && submitButton.isConnected) {
+                submitButton.disabled = false;
+            }
+        }
+
+        return;
+    }
+
 
     // -----------------------------------------
     // THEM / SUA MON
