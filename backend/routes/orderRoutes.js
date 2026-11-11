@@ -36,10 +36,10 @@ router.get("/", async (req, res) => {
 
         res.status(200).json(result.recordset);
     } catch (error) {
-        console.error("Loi lay danh sach don hang:", error.message);
+        console.error("Lỗi lấy danh sách đơn hàng:", error.message);
 
         res.status(500).json({
-            message: "Khong the lay danh sach don hang"
+            message: "Không thể lấy danh sách đơn hàng"
         });
     }
 });
@@ -52,7 +52,7 @@ router.get("/:id", async (req, res) => {
         orderId.trim().length > 20
     ) {
         return res.status(400).json({
-            error: "Ma don hang khong hop le"
+            error: "Mã đơn hàng không hơp lệ"
         });
     }
 
@@ -84,7 +84,7 @@ router.get("/:id", async (req, res) => {
 
         if (!order) {
             return res.status(404).json({
-                error: "Don hang khong ton tai"
+                error: "Đơn hàng không tồn tại"
             });
         }
 
@@ -129,10 +129,10 @@ router.get("/:id", async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Loi lay chi tiet don hang:", error);
+        console.error("Lỗi lấy chi tiết đơn hàng:", error);
 
         res.status(500).json({
-            error: "Khong the lay chi tiet don hang"
+            error: "Không thể lấy chi tiết đơn hàng"
         });
     }
 });
@@ -141,7 +141,7 @@ router.post("/:id/items", async (req, res) => {
 
     if (!authorization.startsWith("Bearer ")) {
         return res.status(401).json({
-            error: "Chua dang nhap"
+            error: "Chưa đăng nhập"
         });
     }
 
@@ -155,7 +155,7 @@ router.post("/:id/items", async (req, res) => {
         );
     } catch (error) {
         return res.status(401).json({
-            error: "Token khong hop le hoac da het han"
+            error: "Token không hợp lệ hoặc đã hết hạn"
         });
     }
 
@@ -168,7 +168,7 @@ router.post("/:id/items", async (req, res) => {
         orderId.trim().length > 20
     ) {
         return res.status(400).json({
-            error: "Ma don hang khong hop le"
+            error: "Mã đơn hàng không hợp lệ"
         });
     }
 
@@ -186,7 +186,7 @@ router.post("/:id/items", async (req, res) => {
         )
     ) {
         return res.status(400).json({
-            error: "Thong tin mon khong hop le"
+            error: "Thông tin món không hơp lệ"
         });
     }
 
@@ -196,7 +196,7 @@ router.post("/:id/items", async (req, res) => {
         decoded.userId.length > 10
     ) {
         return res.status(401).json({
-            error: "Thong tin dang nhap khong hop le"
+            error: "Thông tin đăng nhập không hợp lệ"
         });
     }
 
@@ -222,7 +222,7 @@ router.post("/:id/items", async (req, res) => {
 
         if (!user || !createOrderRoles.has(user.role)) {
             return res.status(403).json({
-                error: "Tai khoan khong co quyen them mon"
+                error: "Tài khoản không có quyền thêm món"
             });
         }
 
@@ -242,13 +242,13 @@ router.post("/:id/items", async (req, res) => {
         const order = orderResult.recordset[0];
 
         if (!order) {
-            throw createError(404, "Don hang khong ton tai");
+            throw createError(404, "Đơn hàng không tồn tại");
         }
 
         if (!["pending", "serving"].includes(order.status)) {
             throw createError(
                 409,
-                "Trang thai don hang khong cho phep them mon"
+                "Trạng thái đơn hàng không cho phép thêm món"
             );
         }
 
@@ -288,7 +288,7 @@ router.post("/:id/items", async (req, res) => {
         if (!item) {
             throw createError(
                 400,
-                "San pham khong ton tai hoac da ngung kinh doanh"
+                "Sản phẩm không tồn tại hoặc đã ngừng kinh doanh"
             );
         }
 
@@ -311,7 +311,7 @@ router.post("/:id/items", async (req, res) => {
         transactionStarted = false;
 
         res.status(201).json({
-            message: "Them mon thanh cong",
+            message: "Thêm món thành công",
             order_id: order.order_id,
             status: order.status,
             item,
@@ -323,7 +323,7 @@ router.post("/:id/items", async (req, res) => {
             try {
                 await transaction.rollback();
             } catch (rollbackError) {
-                console.error("Loi rollback:", rollbackError.message);
+                console.error("Lỗi rollback:", rollbackError.message);
             }
         }
 
@@ -333,10 +333,10 @@ router.post("/:id/items", async (req, res) => {
             });
         }
 
-        console.error("Loi them mon:", error);
+        console.error("Lỗi thêm món:", error);
 
         res.status(500).json({
-            error: "Khong the them mon"
+            error: "Không thể thêm món"
         });
     }
 });
@@ -345,7 +345,7 @@ router.patch("/:id/status", async (req, res) => {
 
     if (!authorization.startsWith("Bearer ")) {
         return res.status(401).json({
-            error: "Chua dang nhap"
+            error: "Chưa đăng nhập"
         });
     }
 
@@ -359,7 +359,7 @@ router.patch("/:id/status", async (req, res) => {
         );
     } catch (error) {
         return res.status(401).json({
-            error: "Token khong hop le hoac da het han"
+            error: "Token không hợp lệ hoặc đã hết hạn"
         });
     }
 
@@ -372,13 +372,13 @@ router.patch("/:id/status", async (req, res) => {
         orderId.trim().length > 20
     ) {
         return res.status(400).json({
-            error: "Ma don hang khong hop le"
+            error: "Mã đơn hàng không hợp lệ"
         });
     }
 
     if (status !== "serving") {
         return res.status(400).json({
-            error: "Chi ho tro chuyen tu pending sang serving"
+            error: "Chỉ hỗ trợ chuyển từ đang cờ xử lý sang đang phục vụ"
         });
     }
 
@@ -388,7 +388,7 @@ router.patch("/:id/status", async (req, res) => {
         decoded.userId.length > 10
     ) {
         return res.status(401).json({
-            error: "Thong tin dang nhap khong hop le"
+            error: "Thông tin đăng nhập không hợp lệ"
         });
     }
 
@@ -414,7 +414,7 @@ router.patch("/:id/status", async (req, res) => {
 
         if (!user || !createOrderRoles.has(user.role)) {
             return res.status(403).json({
-                error: "Tai khoan khong co quyen chuyen trang thai don hang"
+                error: "Tài khoản không có quyền chuyển trạng thái đơn hàng"
             });
         }
 
@@ -434,13 +434,13 @@ router.patch("/:id/status", async (req, res) => {
         const order = orderResult.recordset[0];
 
         if (!order) {
-            throw createError(404, "Don hang khong ton tai");
+            throw createError(404, "Đơn hàng không tồn tại");
         }
 
         if (order.status !== "pending") {
             throw createError(
                 409,
-                "Chi don pending moi duoc chuyen sang serving"
+                "Chỉ đơn đang chờ xử lý mới được chuyển sang đang phục vụ"
             );
         }
 
@@ -462,7 +462,7 @@ router.patch("/:id/status", async (req, res) => {
         if (updateResult.recordset.length !== 1) {
             throw createError(
                 409,
-                "Khong the chuyen trang thai don hang"
+                "Không thể chuyển trạng thái đơn hàng"
             );
         }
 
@@ -470,7 +470,7 @@ router.patch("/:id/status", async (req, res) => {
         transactionStarted = false;
 
         res.status(200).json({
-            message: "Chuyen trang thai don hang thanh cong",
+            message: "Chuyển trạng thái đơn hàng thành công",
             order: updateResult.recordset[0]
         });
 
@@ -479,7 +479,7 @@ router.patch("/:id/status", async (req, res) => {
             try {
                 await transaction.rollback();
             } catch (rollbackError) {
-                console.error("Loi rollback:", rollbackError.message);
+                console.error("Lỗi rollback:", rollbackError.message);
             }
         }
 
@@ -489,10 +489,10 @@ router.patch("/:id/status", async (req, res) => {
             });
         }
 
-        console.error("Loi chuyen trang thai don hang:", error);
+        console.error("Lỗi chuyển trạng thái đơn hàng:", error);
 
         res.status(500).json({
-            error: "Khong the chuyen trang thai don hang"
+            error: "Không thể chuyển trạng thái đơn hàng"
         });
     }
 });
@@ -501,7 +501,7 @@ router.post("/", async (req, res) => {
 
     if (!authorization.startsWith("Bearer ")) {
         return res.status(401).json({
-            error: "Chua dang nhap"
+            error: "Chưa đăng nhập"
         });
     }
 
@@ -515,7 +515,7 @@ router.post("/", async (req, res) => {
         );
     } catch (error) {
         return res.status(401).json({
-            error: "Token khong hop le hoac da het han"
+            error: "Token không hợp lệ hoặc đã hết hạn"
         });
     }
 
@@ -527,7 +527,7 @@ router.post("/", async (req, res) => {
         table_id.trim().length > 10
     ) {
         return res.status(400).json({
-            error: "Ma ban khong hop le"
+            error: "Mã bàn không hợp lệ"
         });
     }
 
@@ -537,7 +537,7 @@ router.post("/", async (req, res) => {
         (typeof note !== "string" || note.length > 500)
     ) {
         return res.status(400).json({
-            error: "Ghi chu don hang khong hop le"
+            error: "Ghi chú đơn hàng không hợp lệ"
         });
     }
 
@@ -547,7 +547,7 @@ router.post("/", async (req, res) => {
         items.length > 100
     ) {
         return res.status(400).json({
-            error: "Danh sach mon khong hop le"
+            error: "Danh sách món không hợp lệ"
         });
     }
 
@@ -570,7 +570,7 @@ router.post("/", async (req, res) => {
             )
         ) {
             return res.status(400).json({
-                error: "Thong tin mon khong hop le"
+                error: "Thông tin món không hợp lệ"
             });
         }
     }
@@ -587,7 +587,7 @@ router.post("/", async (req, res) => {
             decoded.userId.length > 10
         ) {
             return res.status(401).json({
-                error: "Thong tin dang nhap khong hop le"
+                error: "Thông tin đăng nhập không hợp lệ"
             });
         }
 
@@ -610,13 +610,13 @@ router.post("/", async (req, res) => {
 
         if (!user) {
             return res.status(403).json({
-                error: "Tai khoan chua lien ket voi nhan vien dang hoat dong"
+                error: "Tài khoản chưa liên kết với nhân viên đang hoạt động"
             });
         }
 
         if (!createOrderRoles.has(user.role)) {
             return res.status(403).json({
-                error: "Tai khoan khong co quyen tao don hang"
+                error: "Tài khoản không có quyền tạo đơn hàng"
             });
         }
 
@@ -641,15 +641,15 @@ router.post("/", async (req, res) => {
         const table = tableResult.recordset[0];
 
         if (!table) {
-            throw createError(404, "Ban khong ton tai");
+            throw createError(404, "Bàn không tồn tại");
         }
 
         if (!table.is_active) {
-            throw createError(409, "Ban khong con hoat dong");
+            throw createError(409, "Bàn không còn họat động");
         }
 
         if (table.status !== "available") {
-            throw createError(409, "Ban khong o trang thai trong");
+            throw createError(409, "Bàn không ở trạng thái trọng");
         }
 
         const activeOrderResult = await new sql.Request(transaction)
@@ -662,7 +662,7 @@ router.post("/", async (req, res) => {
             `);
 
         if (activeOrderResult.recordset.length > 0) {
-            throw createError(409, "Ban dang co don hang chua hoan tat");
+            throw createError(409, "Bàn đang có đơn hàng chưa hoàn tất");
         }
 
         const lockResult = await new sql.Request(transaction).query(`
@@ -678,7 +678,7 @@ router.post("/", async (req, res) => {
         `);
 
         if (lockResult.recordset[0].lock_result < 0) {
-            throw createError(503, "Khong the cap ma don hang");
+            throw createError(503, "Không thể cấp mã đơn hàng");
         }
 
         const numberResult = await new sql.Request(transaction).query(`
@@ -701,13 +701,13 @@ router.post("/", async (req, res) => {
         );
 
         if (!Number.isSafeInteger(nextNumber)) {
-            throw createError(500, "Khong the tao ma don hang");
+            throw createError(500, "Không thể tạo mã đơn hàng");
         }
 
         const orderId = "ORD" + String(nextNumber).padStart(3, "0");
 
         if (orderId.length > 20) {
-            throw createError(500, "Ma don hang vuot qua gioi han");
+            throw createError(500, "Mã đơn hàng vượt quá giới hạn");
         }
 
         const orderResult = await new sql.Request(transaction)
@@ -780,7 +780,7 @@ router.post("/", async (req, res) => {
             if (detailResult.rowsAffected[0] !== 1) {
                 throw createError(
                     400,
-                    "San pham khong ton tai hoac da ngung kinh doanh"
+                    "Sản phẩm không tồn tại hoặc đã ngừng kinh doanh"
                 );
             }
         }
@@ -796,7 +796,7 @@ router.post("/", async (req, res) => {
             `);
 
         if (updateTableResult.rowsAffected[0] !== 1) {
-            throw createError(409, "Khong the cap nhat trang thai ban");
+            throw createError(409, "Không thể cập nhật trạng thái bạn");
         }
 
         const totalResult = await new sql.Request(transaction)
@@ -815,7 +815,7 @@ router.post("/", async (req, res) => {
         transactionStarted = false;
 
         res.status(201).json({
-            message: "Tao don hang thanh cong",
+            message: "Tạo đơn hàng thành công",
             order: orderResult.recordset[0],
             total_amount: totalResult.recordset[0].total_amount
         });
@@ -825,7 +825,7 @@ router.post("/", async (req, res) => {
             try {
                 await transaction.rollback();
             } catch (rollbackError) {
-                console.error("Loi rollback:", rollbackError.message);
+                console.error("Lỗi rollback:", rollbackError.message);
             }
         }
 
@@ -837,14 +837,14 @@ router.post("/", async (req, res) => {
 
         if (error.number === 2627 || error.number === 2601) {
             return res.status(409).json({
-                error: "Ma don hang da ton tai"
+                error: "Mã đơn hàng đã tồn tại"
             });
         }
 
-        console.error("Loi tao don hang:", error);
+        console.error("Lỗi tạo đơn hàng:", error);
 
         res.status(500).json({
-            error: "Khong the tao don hang"
+            error: "Không thể tạo đơn hàng"
         });
     }
 });
@@ -853,7 +853,7 @@ router.patch("/:id/cancel", async (req, res) => {
 
     if (!authorization.startsWith("Bearer ")) {
         return res.status(401).json({
-            error: "Chua dang nhap"
+            error: "Chưa đăng nhập"
         });
     }
 
@@ -867,7 +867,7 @@ router.patch("/:id/cancel", async (req, res) => {
         );
     } catch (error) {
         return res.status(401).json({
-            error: "Token khong hop le hoac da het han"
+            error: "Token không hợp lệ hoặc đã hết hạn"
         });
     }
 
@@ -879,7 +879,7 @@ router.patch("/:id/cancel", async (req, res) => {
         orderId.trim().length > 20
     ) {
         return res.status(400).json({
-            error: "Ma don hang khong hop le"
+            error: "Mã đơn hàng không hợp lệ"
         });
     }
 
@@ -889,7 +889,7 @@ router.patch("/:id/cancel", async (req, res) => {
         decoded.userId.length > 10
     ) {
         return res.status(401).json({
-            error: "Thong tin dang nhap khong hop le"
+            error: "Thông tin đăng nhập không hợp lệ"
         });
     }
 
@@ -915,7 +915,7 @@ router.patch("/:id/cancel", async (req, res) => {
 
         if (!user || !createOrderRoles.has(user.role)) {
             return res.status(403).json({
-                error: "Tai khoan khong co quyen huy don hang"
+                error: "Tài khoản không có quyền hủy đơn hàng"
             });
         }
 
@@ -931,7 +931,7 @@ router.patch("/:id/cancel", async (req, res) => {
 
         if (!initialOrder) {
             return res.status(404).json({
-                error: "Don hang khong ton tai"
+                error: "Đơn hàng không tồn tại"
             });
         }
 
@@ -948,7 +948,7 @@ router.patch("/:id/cancel", async (req, res) => {
             `);
 
         if (!tableResult.recordset[0]) {
-            throw createError(409, "Ban cua don hang khong ton tai");
+            throw createError(409, "Bàn của đơn hàng không tồn tại");
         }
 
         const orderResult = await new sql.Request(transaction)
@@ -962,19 +962,19 @@ router.patch("/:id/cancel", async (req, res) => {
         const order = orderResult.recordset[0];
 
         if (!order) {
-            throw createError(404, "Don hang khong ton tai");
+            throw createError(404, "Đơn hàng không tồn tại");
         }
 
         if (order.table_id !== initialOrder.table_id) {
-            throw createError(409, "Thong tin ban cua don hang da thay doi");
+            throw createError(409, "Thông tin bàn của đơn hàng đã thay đổi");
         }
 
         if (!["pending", "serving"].includes(order.status)) {
-            throw createError(409, "Trang thai don hang khong cho phep huy");
+            throw createError(409, "Trạng thái đơn hàng không cho phép hủy");
         }
 
         if (order.status === "serving" && user.role !== "admin") {
-            throw createError(403, "Chi admin duoc huy don dang serving");
+            throw createError(403, "Chỉ admin dược hủy đơn đang đang phục vụ");
         }
 
         const updateResult = await new sql.Request(transaction)
@@ -993,7 +993,7 @@ router.patch("/:id/cancel", async (req, res) => {
             `);
 
         if (updateResult.recordset.length !== 1) {
-            throw createError(409, "Khong the huy don hang");
+            throw createError(409, "Không thể hủy đơn hàng");
         }
 
         const activeResult = await new sql.Request(transaction)
@@ -1030,7 +1030,7 @@ router.patch("/:id/cancel", async (req, res) => {
         transactionStarted = false;
 
         res.status(200).json({
-            message: "Huy don hang thanh cong",
+            message: "Hủy đơn hàng thành công",
             order: updateResult.recordset[0],
             table: tableAfterResult.recordset[0]
         });
@@ -1040,7 +1040,7 @@ router.patch("/:id/cancel", async (req, res) => {
             try {
                 await transaction.rollback();
             } catch (rollbackError) {
-                console.error("Loi rollback:", rollbackError.message);
+                console.error("Lỗi rollback:", rollbackError.message);
             }
         }
 
@@ -1050,10 +1050,10 @@ router.patch("/:id/cancel", async (req, res) => {
             });
         }
 
-        console.error("Loi huy don hang:", error);
+        console.error("Lỗi hủy đơn hàng:", error);
 
         res.status(500).json({
-            error: "Khong the huy don hang"
+            error: "Không thể hủy đơn hàng"
         });
     }
 });
@@ -1062,7 +1062,7 @@ router.patch("/:id/pay", async (req, res) => {
 
     if (!authorization.startsWith("Bearer ")) {
         return res.status(401).json({
-            error: "Chua dang nhap"
+            error: "Chưa đang nhập"
         });
     }
 
@@ -1076,7 +1076,7 @@ router.patch("/:id/pay", async (req, res) => {
         );
     } catch (error) {
         return res.status(401).json({
-            error: "Token khong hop le hoac da het han"
+            error: "Token không hợp lệ hoặc đã hết hạn"
         });
     }
 
@@ -1088,7 +1088,7 @@ router.patch("/:id/pay", async (req, res) => {
         orderId.trim().length > 20
     ) {
         return res.status(400).json({
-            error: "Ma don hang khong hop le"
+            error: "Mã đơn hàng không hợp lệ"
         });
     }
 
@@ -1098,7 +1098,7 @@ router.patch("/:id/pay", async (req, res) => {
         decoded.userId.length > 10
     ) {
         return res.status(401).json({
-            error: "Thong tin dang nhap khong hop le"
+            error: "Thông tin đăng nhập không hợp lệ"
         });
     }
 
@@ -1124,7 +1124,7 @@ router.patch("/:id/pay", async (req, res) => {
 
         if (!user || !["admin", "phucvu"].includes(user.role)) {
             return res.status(403).json({
-                error: "Tai khoan khong co quyen thanh toan don hang"
+                error: "Tài khoản không có quyền thanh toán đơn hàng"
             });
         }
 
@@ -1140,7 +1140,7 @@ router.patch("/:id/pay", async (req, res) => {
 
         if (!initialOrder) {
             return res.status(404).json({
-                error: "Don hang khong ton tai"
+                error: "Đơn hàng không tồn tại"
             });
         }
 
@@ -1157,7 +1157,7 @@ router.patch("/:id/pay", async (req, res) => {
             `);
 
         if (!tableResult.recordset[0]) {
-            throw createError(409, "Ban cua don hang khong ton tai");
+            throw createError(409, "Bàn của đơn hàng không tồn tại");
         }
 
         const orderResult = await new sql.Request(transaction)
@@ -1171,7 +1171,7 @@ router.patch("/:id/pay", async (req, res) => {
         const order = orderResult.recordset[0];
 
         if (!order) {
-            throw createError(404, "Don hang khong ton tai");
+            throw createError(404, "Đơn hàng không tồn tại");
         }
 
         if (order.table_id !== initialOrder.table_id) {
@@ -1212,7 +1212,7 @@ router.patch("/:id/pay", async (req, res) => {
             `);
 
         if (updateResult.recordset.length !== 1) {
-            throw createError(409, "Khong the thanh toan don hang");
+            throw createError(409, "Không thể thanh toán đơn hàng");
         }
 
         const activeResult = await new sql.Request(transaction)
@@ -1249,7 +1249,7 @@ router.patch("/:id/pay", async (req, res) => {
         transactionStarted = false;
 
         res.status(200).json({
-            message: "Thanh toan don hang thanh cong",
+            message: "Thanh toán đơn hàng thành công",
             order: updateResult.recordset[0],
             total_amount: totalResult.recordset[0].total_amount,
             table: tableAfterResult.recordset[0]
@@ -1260,7 +1260,7 @@ router.patch("/:id/pay", async (req, res) => {
             try {
                 await transaction.rollback();
             } catch (rollbackError) {
-                console.error("Loi rollback:", rollbackError.message);
+                console.error("Lỗi rollback:", rollbackError.message);
             }
         }
 
@@ -1270,10 +1270,10 @@ router.patch("/:id/pay", async (req, res) => {
             });
         }
 
-        console.error("Loi thanh toan don hang:", error);
+        console.error("Lỗi thanh tóan đơn hàng:", error);
 
         res.status(500).json({
-            error: "Khong the thanh toan don hang"
+            error: "Không thể thanh toán đơn hàng"
         });
     }
 });
