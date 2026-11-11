@@ -1122,7 +1122,7 @@ router.patch("/:id/pay", async (req, res) => {
 
         const user = userResult.recordset[0];
 
-        if (!user || !["admin", "phucvu"].includes(user.role)) {
+        if (!user || !["admin", "manager", "thungan"].includes(user.role)) {
             return res.status(403).json({
                 error: "Tài khoản không có quyền thanh toán đơn hàng"
             });
