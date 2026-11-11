@@ -263,42 +263,6 @@
   }
 
   let db = loadDatabase();
-  let employees = [];
-  let employeeError = "";
-  let report = null;
-  let reportError = "";
-  const todayISO = () => dateKey(new Date());
-  const weekAgoISO = () => dateKey(new Date(Date.now() - 6 * 86400000));
-  let reportFrom = weekAgoISO();
-  let reportTo = todayISO();
-  let reportGroup = "day";
-
-  async function managerRequest(path, options = {}) {
-    const response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json",
-        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`,
-        ...(options.headers || {}) }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Yêu cầu thất bại.");
-    return data;
-  }
-
-  async function loadEmployees() {
-    employeeError = "";
-    try { employees = await managerRequest("/employees"); }
-    catch (error) { employeeError = error.message; employees = []; }
-    if (state.page === "employees") render();
-  }
-
-  async function loadReport() {
-    reportError = "";
-    try {
-      report = await managerRequest(`/reports?from=${reportFrom}&to=${reportTo}&groupBy=${reportGroup}`);
-    } catch (error) { reportError = error.message; report = null; }
-    if (state.page === "reports") render();
-  }
 
   function saveDatabase() {
     localStorage.setItem(
@@ -615,8 +579,6 @@
 
     state.page = page;
     render();
-    if (page === "employees") loadEmployees();
-    if (page === "reports") loadReport();
   }
 
   function checkManager() {
@@ -1980,41 +1942,68 @@ if (mode === "merge") {
   // =====================================================
 
   function employeesPage() {
-    const rows = employees.map(staff => `
+    const rows = db.staff.map(staff => `
       <tr>
-        <td>${escapeHTML(staff.employee_id)}</td>
-        <td><b>${escapeHTML(staff.full_name)}</b></td>
-        <td>${escapeHTML(staff.phone || "—")}</td>
-        <td>${escapeHTML(staff.position)}</td>
-        <td>${escapeHTML(staff.username || "Chưa cấp")}</td>
-        <td>${escapeHTML(staff.role ? roleName(normalizeRole(staff.role)) : "—")}</td>
-        <td>${pill(staff.is_active && staff.account_active !== false ? "Hoạt động" : "Đã khóa",
-          staff.is_active && staff.account_active !== false ? "green" : "red")}</td>
-        <td><button type="button" class="btn small"
-          data-edit-employee="${escapeHTML(staff.employee_id)}">Chỉnh sửa</button></td>
+
+        <td>
+          <b>${escapeHTML(staff.name)}</b>
+        </td>
+
+        <td>${escapeHTML(staff.username)}</td>
+
+        <td>${roleName(staff.role)}</td>
+
+        <td>
+          ${pill(
+            staff.active ? "Hoạt động" : "Đã khóa",
+            staff.active ? "green" : "red"
+          )}
+        </td>
+
+        <td>
+          <button
+            type="button"
+            class="btn small"
+            data-edit-employee="${escapeHTML(staff.id)}">
+            Chỉnh sửa
+          </button>
+        </td>
+
       </tr>
     `).join("");
+
     return heading(
       "Quản lý nhân viên",
-      `${employees.length} nhân viên trong hệ thống`,
-      button("➕ Thêm nhân viên", "add-employee", "primary")
+      `${db.staff.length} nhân viên trong hệ thống`,
+      button(
+        "➕ Thêm nhân viên",
+        "add-employee",
+        "primary"
+      )
     ) + `
-      ${employeeError ? `<div class="notice">${escapeHTML(employeeError)}</div>` : ""}
+
       <div class="card">
+
         <div class="table-wrap">
+
           <table>
+
             <thead>
               <tr>
-                <th>Mã</th><th>Nhân viên</th><th>Số điện thoại</th><th>Chức vụ</th>
+                <th>Nhân viên</th>
                 <th>Tài khoản</th>
                 <th>Vai trò</th>
                 <th>Trạng thái</th>
                 <th>Thao tác</th>
               </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="8">Chưa có nhân viên.</td></tr>'}</tbody>
+
+            <tbody>${rows}</tbody>
+
           </table>
+
         </div>
+
       </div>
     `;
   }
@@ -2024,32 +2013,101 @@ if (mode === "merge") {
   // =====================================================
 
   function reportsPage() {
-    return heading("Báo cáo thống kê", "Dữ liệu từ hóa đơn đã thanh toán") + `
-      <form id="reportFilter" class="filters">
-        <label>Từ ngày <input type="date" name="from" value="${reportFrom}" required></label>
-        <label>Đến ngày <input type="date" name="to" value="${reportTo}" required></label>
-        <label>Nhóm theo <select name="groupBy">
-          ${[["day","Ngày"],["week","Tuần"],["month","Tháng"]].map(([value,label]) =>
-            `<option value="${value}" ${reportGroup === value ? "selected" : ""}>${label}</option>`).join("")}
-        </select></label><button class="btn primary" type="submit">Xem báo cáo</button>
-      </form>
-      ${reportError ? `<div class="notice">${escapeHTML(reportError)}</div>` : ""}
-      ${report ? `<div class="grid stats">
-        ${statsCard("Doanh thu", money(report.revenue), "Trong khoảng đã chọn")}
-        ${statsCard("Số hóa đơn", report.invoiceCount, "Đã thanh toán")}
-        ${statsCard("Trung bình / hóa đơn", money(report.average), "Trong khoảng đã chọn")}
+    const today = dateKey(new Date());
+
+    const invoices = db.invoices.filter(invoice => {
+      if (state.period === "all") return true;
+
+      if (state.period === "today") {
+        return dateKey(invoice.date) === today;
+      }
+
+      if (state.period === "week") {
+        return new Date(invoice.date).getTime() >=
+          Date.now() - 7 * 86400000;
+      }
+
+      return true;
+    });
+
+    const revenue = invoices.reduce(
+      (total, invoice) => total + invoice.total,
+      0
+    );
+
+    const average = invoices.length
+      ? Math.round(revenue / invoices.length)
+      : 0;
+
+    const periodButtons = [
+      ["today", "Hôm nay"],
+      ["week", "7 ngày"],
+      ["all", "Tất cả"]
+    ].map(item => `
+      <button
+        class="filter ${
+          state.period === item[0] ? "active" : ""
+        }"
+        data-period="${item[0]}">
+
+        ${item[1]}
+
+      </button>
+    `).join("");
+
+    return heading(
+      "Báo cáo thống kê",
+      "Phân tích hoạt động kinh doanh của quán"
+    ) + `
+
+      <div class="filters">
+        ${periodButtons}
       </div>
-      <div class="card"><h2>Doanh thu theo ${reportGroup === "day" ? "ngày" : reportGroup === "week" ? "tuần" : "tháng"}</h2>
-        ${report.timeline.length ? `<div class="table-wrap"><table><thead><tr><th>Kỳ</th><th>Số hóa đơn</th><th>Doanh thu</th></tr></thead><tbody>
-          ${report.timeline.map(row => `<tr><td>${escapeHTML(row.period)}</td><td>${row.invoiceCount}</td><td>${money(row.revenue)}</td></tr>`).join("")}
-        </tbody></table></div>` : '<div class="empty">Không có hóa đơn trong khoảng thời gian này.</div>'}
-      </div><div class="card" style="margin-top:20px"><h2>Món bán chạy</h2>
-        ${report.topProducts.length ? `<div class="table-wrap"><table><thead><tr><th>Món</th><th>Số lượng</th></tr></thead><tbody>
-          ${report.topProducts.map(row => `<tr><td>${escapeHTML(row.name)}</td><td>${row.quantity}</td></tr>`).join("")}</tbody></table></div>` : '<div class="empty">Chưa có món đã bán.</div>'}
-      </div><div class="card" style="margin-top:20px"><h2>Tồn kho hiện tại</h2>
-        <div class="table-wrap"><table><thead><tr><th>Nguyên liệu</th><th>Tồn hiện tại</th></tr></thead><tbody>
-          ${report.currentStock.map(row => `<tr><td>${escapeHTML(row.name)}</td><td>${row.quantity} ${escapeHTML(row.unit)}</td></tr>`).join("") || '<tr><td colspan="2">Chưa có nguyên liệu.</td></tr>'}
-        </tbody></table></div></div>` : '<div class="empty">Chọn khoảng thời gian để tải báo cáo.</div>'}`;
+
+      <div class="grid stats">
+
+        ${statsCard(
+          "Doanh thu",
+          money(revenue),
+          "Doanh thu trong kỳ"
+        )}
+
+        ${statsCard(
+          "Số hóa đơn",
+          invoices.length,
+          "Giao dịch thành công"
+        )}
+
+        ${statsCard(
+          "Trung bình / hóa đơn",
+          money(average),
+          "Giá trị trung bình"
+        )}
+
+        ${statsCard(
+          "Số bàn",
+          db.tables.length,
+          "Tổng số bàn"
+        )}
+
+      </div>
+
+      <div class="card">
+        <h2>📈 Biểu đồ doanh thu 7 ngày</h2>
+        ${revenueChart(7)}
+      </div>
+
+      <div class="card" style="margin-top:20px">
+        <h2>📋 Chi tiết hóa đơn</h2>
+
+        ${invoiceTable(
+          [...invoices].sort(
+            (a, b) => new Date(b.date) - new Date(a.date)
+          )
+        )}
+
+      </div>
+    `;
   }
 
   // =====================================================
@@ -2459,7 +2517,14 @@ if (mode === "merge") {
 
     // THEM / SUA NHAN VIEN
     else if (modal.type === "employee") {
-      const staff = employees.find(item => item.employee_id === modal.id) || {};
+      const staff = db.staff.find(
+        item => item.id === modal.id
+      ) || {
+        name: "",
+        username: "",
+        role: "service",
+        active: true
+      };
 
       title = modal.id
         ? "Chỉnh sửa nhân viên"
@@ -2467,26 +2532,86 @@ if (mode === "merge") {
 
       content = `
         <form id="employeeForm">
-          <div class="field"><label>Họ tên</label><input name="full_name" required maxlength="100" value="${escapeHTML(staff.full_name || "")}"></div>
-          <div class="field"><label>Số điện thoại</label><input name="phone" maxlength="15" value="${escapeHTML(staff.phone || "")}"></div>
-          <div class="field"><label>Email</label><input name="email" type="email" maxlength="100" value="${escapeHTML(staff.email || "")}"></div>
-          <div class="field"><label>Chức vụ</label><input name="position" required maxlength="50" value="${escapeHTML(staff.position || "")}"></div>
-          <div class="field"><label>Tên đăng nhập (để trống nếu chưa cấp)</label><input name="username" maxlength="50" value="${escapeHTML(staff.username || "")}"></div>
-          <div class="field"><label>Mật khẩu ${staff.user_id ? "(để trống nếu giữ nguyên)" : "(ít nhất 12 ký tự nếu cấp tài khoản)"}</label>
-            <input name="password" type="password" autocomplete="new-password" minlength="12"></div>
-          <div class="field"><label>Vai trò</label><select name="role"><option value="">Chưa cấp</option>
-            ${[["manager","Quản lý"],["phucvu","Phục vụ"],["thungan","Thu ngân"],["kho","Nhân viên kho"]]
-              .map(([value,label]) => `<option value="${value}" ${staff.role === value ? "selected" : ""}>${label}</option>`).join("")}
-          </select></div>
-          <div class="field"><label>Trạng thái nhân viên</label><select name="is_active">
-            <option value="1" ${staff.is_active !== false ? "selected" : ""}>Hoạt động</option>
-            <option value="0" ${staff.is_active === false ? "selected" : ""}>Ngừng hoạt động</option>
-          </select></div>
-          <div class="field"><label>Trạng thái tài khoản</label><select name="account_active">
-            <option value="1" ${staff.account_active !== false ? "selected" : ""}>Hoạt động</option>
-            <option value="0" ${staff.account_active === false ? "selected" : ""}>Khóa</option>
-          </select></div>
+
+          <div class="field">
+            <label>Họ tên</label>
+
+            <input
+              name="name"
+              required
+              value="${escapeHTML(staff.name)}">
+          </div>
+
+          <div class="field">
+            <label>Tên đăng nhập</label>
+
+            <input
+              name="username"
+              required
+              value="${escapeHTML(staff.username)}">
+          </div>
+
+          <div class="field">
+
+            <label>
+              Mật khẩu
+              ${modal.id
+                ? "(để trống nếu không thay đổi)"
+                : ""}
+            </label>
+
+            <input
+              name="password"
+              type="password"
+              autocomplete="new-password"
+              ${modal.id ? "" : "required"}>
+          </div>
+
+          <div class="field">
+            <label>Vai trò</label>
+
+            <select name="role">
+
+              ${Object.keys(permissions).map(role => `
+                <option
+                  value="${role}"
+                  ${staff.role === role ? "selected" : ""}>
+
+                  ${roleName(role)}
+
+                </option>
+              `).join("")}
+
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Trạng thái</label>
+
+            <select name="active">
+
+              <option
+                value="1"
+                ${staff.active ? "selected" : ""}>
+                Hoạt động
+              </option>
+
+              <option
+                value="0"
+                ${!staff.active ? "selected" : ""}>
+                Khóa
+              </option>
+
+            </select>
+          </div>
+
+          <p class="muted">
+            Chức năng này hiện quản lý dữ liệu demo.
+            Tài khoản SQL Server cần được tạo qua backend.
+          </p>
+
           ${formButtons("Lưu nhân viên")}
+
         </form>
       `;
     }
@@ -3129,19 +3254,6 @@ app.addEventListener("click", async event => {
       new FormData(form).entries()
     );
 
-    if (form.id === "reportFilter") {
-      if (!checkManager()) return;
-      if (!values.from || !values.to || values.from > values.to) {
-        notify("Khoảng ngày không hợp lệ.", true);
-        return;
-      }
-      reportFrom = values.from;
-      reportTo = values.to;
-      reportGroup = values.groupBy;
-      await loadReport();
-      return;
-    }
-
     // -----------------------------------------
     // DANG NHAP SQL SERVER
     // -----------------------------------------
@@ -3383,31 +3495,80 @@ app.addEventListener("click", async event => {
     }
 
     // -----------------------------------------
-    // THEM / SUA NHAN VIEN SQL SERVER
+    // THEM / SUA NHAN VIEN DEMO
     // -----------------------------------------
 
     if (form.id === "employeeForm") {
       if (!checkManager()) return;
 
-      const button = form.querySelector('button[type="submit"]');
-      if (button) button.disabled = true;
-      try {
-        const id = state.modal?.id;
-        await managerRequest(id ? `/employees/${encodeURIComponent(id)}` : "/employees", {
-          method: id ? "PUT" : "POST",
-          body: JSON.stringify({
-            full_name: values.full_name.trim(), phone: values.phone.trim(),
-            email: values.email.trim(), position: values.position.trim(),
-            username: values.username.trim(), password: values.password,
-            role: values.role, is_active: values.is_active === "1",
-            account_active: values.account_active === "1"
-          })
+      const staff = db.staff.find(
+        item => item.id === state.modal?.id
+      );
+
+      const username = String(
+        values.username || ""
+      ).trim();
+
+      const name = String(
+        values.name || ""
+      ).trim();
+
+      if (
+        !name ||
+        !username ||
+        (!staff && !values.password)
+      ) {
+        notify(
+          "Vui lòng nhập đầy đủ thông tin nhân viên.",
+          true
+        );
+        return;
+      }
+
+      const usernameExists = db.staff.some(
+        item =>
+          item.username === username &&
+          item.id !== staff?.id
+      );
+
+      if (usernameExists) {
+        notify(
+          "Tên đăng nhập đã tồn tại.",
+          true
+        );
+        return;
+      }
+
+      const data = {
+        name,
+        username,
+        role: values.role,
+        active: values.active === "1"
+      };
+
+      // Phan nhan vien nay van la demo.
+      // Khong luu mat khau vao localStorage.
+      // Tai khoan SQL Server phai duoc tao qua backend.
+
+      if (staff) {
+        Object.assign(staff, data);
+      } else {
+        db.staff.push({
+          id: createId("NV"),
+          ...data
         });
-        state.modal = null;
-        await loadEmployees();
-        notify("Đã lưu nhân viên.");
-      } catch (error) { notify(error.message, true); }
-      finally { if (button.isConnected) button.disabled = false; }
+      }
+
+      saveDatabase();
+
+      state.modal = null;
+      render();
+
+      notify(
+        "Đã lưu thông tin nhân viên demo. " +
+        "Tài khoản SQL Server chưa thay đổi."
+      );
+
       return;
     }
   });
