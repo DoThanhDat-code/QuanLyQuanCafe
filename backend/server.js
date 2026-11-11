@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const accountRoutes = require("./routes/accountRoutes");
@@ -9,8 +8,9 @@ const { connectDB } = require("./config/db");
 const productRoutes = require("./routes/productRoutes");
 const tableRoutes = require("./routes/tableRoutes");
 const authRoutes = require("./routes/authRoutes");
-const app = express();
+const orderRoutes = require("./routes/orderRoutes");
 
+const app = express();
 
 app.use(cors());
 app.use(express.json());
@@ -25,6 +25,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/products", productRoutes);
 app.use("/api/tables", tableRoutes);
+app.use("/api/orders", orderRoutes);
 
 const PORT = process.env.PORT || 3000;
 
