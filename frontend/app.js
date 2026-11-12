@@ -18,14 +18,21 @@
   const STORAGE_KEY = "moc_coffee_database_v3";
   const SESSION_KEY = "moc_coffee_session_v3";
   const TOKEN_KEY = "moc_coffee_auth_token_v1";
+  
+  
+  // ==========================================
+  // KHOI TAO GIAO DIEN MOC COFFEE
+  // ==========================================
 
   const app = document.getElementById("app");
+
   const toastRoot = document.getElementById("toast-root");
 
   if (!app) {
-    console.error("Khong tim thay #app trong index.html");
+    console.error("Không tìm thấy #app trong index.html");
     return;
   }
+
 
   const money = value =>
     new Intl.NumberFormat("vi-VN").format(value || 0) + " ₫";
@@ -340,8 +347,20 @@
       // hoac { user: {...} }.
       const user = result.user || result;
 
-      setAuthenticatedUser(user);
-      render();
+      
+setAuthenticatedUser(user);
+
+try {
+  await loadCategoriesFromSQL();
+  await loadProductsFromSQL();
+} catch (error) {
+  db.products = [];
+  sqlCategories = [];
+  notify(error.message, true);
+}
+
+render();
+
 
     } catch (error) {
       console.warn(
@@ -389,100 +408,189 @@
 
     sessionStorage.removeItem(SESSION_KEY);
 
-    state.page = "dashboard";
-    state.modal = null;
+    
+state.page = "dashboard";
+state.modal = null;
 
-    render();
-    notify("Đăng nhập thành công!");
+try {
+  await loadCategoriesFromSQL();
+  await loadProductsFromSQL();
+} catch (error) {
+  db.products = [];
+  sqlCategories = [];
+  notify(error.message, true);
+}
+
+render();
+
+notify("Đăng nhập thành công!");
+
   }
 
   // =====================================================
-  // 6. TAI DU LIEU TU SQL SERVER
+ // 6. TAI DU LIEU TU SQL SERVER
   // =====================================================
 
+  // Luu danh sach danh muc lay tu SQL Server
+  let sqlCategories = [];
+  async function apiRequest(path, method = "GET", data = null) {
+  const token = sessionStorage.getItem(TOKEN_KEY);
+
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const options = {
+    method,
+    headers
+  };
+
+  if (data !== null) {
+    options.body = JSON.stringify(data);
+  }
+
+  const response = await fetch(
+    `${API_URL}${path}`,
+    options
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+      result.message ||
+      "Không thể kết nối API."
+    );
+  }
+
+  return result;
+}
+
+  // 1. LAY DANH SACH DANH MUC
+  async function loadCategoriesFromSQL() {
+  const result = await apiRequest("/categories");
+
+  const data = Array.isArray(result)
+    ? result
+    : result.categories || result.data;
+
+  if (!Array.isArray(data)) {
+    throw new Error("Dữ liệu danh mục không hợp lệ.");
+  }
+
+  sqlCategories = data;
+
+  console.log(
+    "Đã tải danh mục:",
+    sqlCategories.length
+  );
+
+  return sqlCategories;
+}
+
+  // 2. LAY DANH SACH SAN PHAM
   async function loadProductsFromSQL() {
-    try {
-      const response = await fetch(`${API_URL}/products`);
+  const result = await apiRequest("/products");
 
-      if (!response.ok) {
-        throw new Error("Không thể tải thực đơn.");
-      }
+  const products = Array.isArray(result)
+    ? result
+    : result.products || result.data;
 
-      const products = await response.json();
-
-      if (!Array.isArray(products)) {
-        throw new Error("Dữ liệu thực đơn không hợp lệ.");
-      }
-
-      db.products = products.map(product => ({
-        id: product.product_id,
-        name: product.product_name,
-        category: product.category_name,
-        price: Number(product.price),
-        emoji: "☕",
-        active: Boolean(product.is_active)
-      }));
-
-      render();
-
-      console.log(
-        "Đã tải thực đơn từ SQL Server:",
-        db.products.length,
-        "món"
-      );
-
-    } catch (error) {
-      console.error("Loi tai san pham:", error);
-      console.warn("Tam su dung thuc don demo.");
-    }
+  if (!Array.isArray(products)) {
+    throw new Error("Dữ liệu sản phẩm không hợp lệ.");
   }
 
-  async function loadTablesFromSQL() {
-    try {
-      const response = await fetch(`${API_URL}/tables`);
+  db.products = products.map(product => ({
+    id: product.product_id,
+    name: product.product_name,
+    categoryId: product.category_id,
+    category: product.category_name,
+    price: Number(product.price),
 
-      if (!response.ok) {
-        throw new Error("Không thể tải danh sách bàn.");
-      }
+    imageUrl: product.image_url || "",
+    description: product.description || "",
 
-      const tables = await response.json();
+    emoji: "☕",
 
-      if (!Array.isArray(tables)) {
-        throw new Error("Dữ liệu bàn không hợp lệ.");
-      }
+    active: Boolean(product.is_active),
+    available: Boolean(product.is_available ?? true)
+  }));
 
-      db.tables = tables
-        .filter(table => Boolean(table.is_active))
-        .map(table => ({
-          id: table.table_id,
-          name: table.table_name,
-          seats: Number(table.seats),
-          status: table.status,
-          active: true
-        }));
+  render();
 
-      if (
-        db.tables.length > 0 &&
-        !db.tables.some(table => table.id === state.tableId)
-      ) {
-        state.tableId = db.tables[0].id;
-        loadCart();
-      }
+  console.log(
+    "Đã tải sản phẩm từ SQL Server:",
+    db.products.length
+  );
 
-      render();
+  return db.products;
+}
+  // 3. HAM GUI YEU CAU THEM, SUA, NGUNG BAN
+ async function productRequest(
+  method,
+  path = "",
+  data = null
+) {
+  return apiRequest(
+    `/products${path}`,
+    method,
+    data
+  );
+}
 
-      console.log(
-        "Đã tải",
-        db.tables.length,
-        "bàn từ SQL Server"
-      );
+  // 4. THEM SAN PHAM VAO SQL SERVER
+  async function addProductToSQL(product) {
+    const result = await productRequest(
+      "POST",
+      "",
+      product
+    );
 
-    } catch (error) {
-      console.error("Loi tai ban:", error);
-      console.warn("Tam su dung danh sach ban demo.");
-    }
+    await loadProductsFromSQL();
+
+    return result;
   }
 
+  // 5. SUA SAN PHAM TRONG SQL SERVER
+  async function updateProductToSQL(id, product) {
+    const result = await productRequest(
+      "PUT",
+      `/${encodeURIComponent(id)}`,
+      product
+    );
+
+    await loadProductsFromSQL();
+
+    return result;
+  }
+
+  // 6. NGUNG KINH DOANH SAN PHAM
+  async function stopProductInSQL(id) {
+  const result = await productRequest(
+    "PATCH",
+    `/${encodeURIComponent(id)}/stop`
+  );
+
+  await loadProductsFromSQL();
+
+  return result;
+}
+
+async function resumeProductInSQL(id) {
+  const result = await productRequest(
+    "PATCH",
+    `/${encodeURIComponent(id)}/resume`
+  );
+
+  await loadProductsFromSQL();
+
+  return result;
+}
   // =====================================================
   // 7. HAM DUNG CHUNG
   // =====================================================
@@ -1216,12 +1324,17 @@
     const existingOrder = getOpenOrder(table.id);
 
     const products = db.products.filter(product =>
-      product.active &&
-      (
-        state.category === "Tất cả" ||
-        product.category === state.category
-      )
-    );
+  product.active &&
+  product.available === true &&
+  sqlCategories.some(category =>
+    category.category_id === product.categoryId &&
+    category.is_active
+  ) &&
+  (
+    state.category === "Tất cả" ||
+    product.category === state.category
+  )
+);
 
     const tableOptions = db.tables.map(item => `
       <option
@@ -1234,7 +1347,12 @@
       </option>
     `).join("");
 
-    const filters = ["Tất cả", ...categories].map(
+   const filters = [
+  "Tất cả",
+  ...sqlCategories
+    .filter(c => c.is_active)
+    .map(c => c.category_name)
+].map(
       category => `
         <button
           class="filter ${
@@ -1362,6 +1480,7 @@
 
     return state.cart.map((item, index) => {
       const product = db.products.find(
+        
         p => p.id === item.productId
       );
 
@@ -1515,78 +1634,185 @@
   // =====================================================
 
   function menuPage() {
-    const rows = db.products.map(product => `
-      <tr>
+  const rows = db.products.map(product => `
+    <tr>
+      <td>${escapeHTML(product.id)}</td>
 
-        <td>${escapeHTML(product.id)}</td>
+      <td>
+        ${product.imageUrl ? `
+          <img
+            src="${escapeHTML(product.imageUrl)}"
+            alt="${escapeHTML(product.name)}"
+            style="width:55px;height:55px;
+                   object-fit:cover;border-radius:8px;"
+          >
+        ` : "☕"}
 
-        <td>
-          ${product.emoji}
-          <b>${escapeHTML(product.name)}</b>
-        </td>
+        <b>${escapeHTML(product.name)}</b>
 
-        <td>${escapeHTML(product.category)}</td>
-
-        <td>${money(product.price)}</td>
-
-        <td>
-          ${pill(
-            product.active ? "Đang bán" : "Ngừng bán",
-            product.active ? "green" : "red"
-          )}
-        </td>
-
-        <td>
-          ${isManager()
-            ? `<button
-                 type="button"
-                 class="btn small"
-                 data-edit-product="${escapeHTML(product.id)}">
-                 Chỉnh sửa
-               </button>`
-            : "Chỉ xem"}
-        </td>
-
-      </tr>
-    `).join("");
-
-    return heading(
-      "Quản lý thực đơn",
-      `${db.products.length} sản phẩm trong hệ thống`,
-      isManager()
-        ? button(
-            "➕ Thêm món",
-            "add-product",
-            "primary"
-          )
-        : ""
-    ) + `
-
-      <div class="card">
-
-        <div class="table-wrap">
-
-          <table>
-            <thead>
-              <tr>
-                <th>Mã món</th>
-                <th>Tên món</th>
-                <th>Danh mục</th>
-                <th>Giá bán</th>
-                <th>Trạng thái</th>
-                <th>Thao tác</th>
-              </tr>
-            </thead>
-
-            <tbody>${rows}</tbody>
-          </table>
-
+        <div class="muted">
+          ${escapeHTML(product.description || "")}
         </div>
+      </td>
+
+      <td>${escapeHTML(product.category)}</td>
+
+      <td>${money(product.price)}</td>
+
+      <td>
+        ${pill(
+          product.active && product.available
+            ? "Đang bán"
+            : "Ngừng bán",
+
+          product.active && product.available
+            ? "green"
+            : "red"
+        )}
+      </td>
+
+      <td>
+  ${isManager() ? `
+    <button
+      type="button"
+      class="btn small"
+      data-edit-product="${escapeHTML(product.id)}">
+      📝 Chỉnh sửa
+    </button>
+
+    ${product.active && product.available === true
+      ? `
+        <button
+          type="button"
+          class="btn small"
+          data-stop-product="${escapeHTML(product.id)}">
+          ⛔ Ngừng bán
+        </button>
+      `
+      : `
+        <button
+          type="button"
+          class="btn small btn-resume"
+          data-resume-product="${escapeHTML(product.id)}">
+          ▶ Mở bán
+        </button>
+      `
+    }
+
+  ` : "Chỉ xem"}
+</td>
+    </tr>
+  `).join("");
+
+  return heading(
+    "Quản lý thực đơn",
+    `${db.products.length} sản phẩm trong hệ thống`,
+    isManager()
+      ? button("➕ Thêm món", "add-product", "primary")
+      : ""
+  ) + `
+
+    <div class="card">
+
+      <div class="data-toolbar">
+
+        <input
+          type="search"
+          id="menuSearch"
+          class="input"
+          placeholder="🔍 Tìm kiếm sản phẩm..."
+          style="max-width:300px">
+
+        <select id="menuCategory" class="input">
+          <option value="">Tất cả danh mục</option>
+
+          ${sqlCategories.map(category => `
+            <option
+              value="${escapeHTML(category.category_id)}">
+              ${escapeHTML(category.category_name)}
+            </option>
+          `).join("")}
+        </select>
 
       </div>
-    `;
-  }
 
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Mã món</th>
+              <th>Tên món</th>
+              <th>Danh mục</th>
+              <th>Giá bán</th>
+              <th>Trạng thái</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+
+          <tbody id="menuProductRows">
+            ${rows}
+          </tbody>
+
+        </table>
+      </div>
+
+    </div>
+  `;
+}function filterMenuProducts() {
+  const search = (
+    document.getElementById("menuSearch")?.value || ""
+  ).trim().toLowerCase();
+
+  const category = 
+    document.getElementById("menuCategory")?.value || "";
+
+  const rows = document.querySelectorAll(
+    "#menuProductRows tr"
+  );
+
+  rows.forEach((row, index) => {
+    const product = db.products[index];
+
+    if (!product) return;
+
+    const matchSearch =
+      String(product.name).toLowerCase().includes(search) ||
+      String(product.id).toLowerCase().includes(search);
+
+    const matchCategory =
+      !category || product.categoryId === category;
+
+    row.hidden = !(matchSearch && matchCategory);
+  });
+}
+// TIM KIEM VA LOC SAN PHAM
+function filterMenuProducts() {
+  const search = (
+    document.getElementById("menuSearch")?.value || ""
+  ).trim().toLowerCase();
+
+  const category =
+    document.getElementById("menuCategory")?.value || "";
+
+  const rows = document.querySelectorAll(
+    "#menuProductRows tr"
+  );
+
+  rows.forEach((row, index) => {
+    const product = db.products[index];
+
+    if (!product) return;
+
+    const matchSearch =
+      String(product.name).toLowerCase().includes(search) ||
+      String(product.id).toLowerCase().includes(search);
+
+    const matchCategory =
+      !category || product.categoryId === category;
+
+    row.hidden = !(matchSearch && matchCategory);
+  });
+}
   // =====================================================
   // 15. QUAN LY HOA DON
   // =====================================================
@@ -2009,6 +2235,16 @@
     `;
   }
 
+async function openProductModal(id = null) {
+  try {
+    await loadCategoriesFromSQL();
+    openModal("product", id);
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+
   function openModal(type, id = null) {
     state.modal = { type, id };
     render();
@@ -2022,55 +2258,64 @@
     let title = "";
     let content = "";
 
-    // THEM / SUA MON
-    if (modal.type === "product") {
-      const product = db.products.find(
-        item => item.id === modal.id
-      ) || {
-        name: "",
-        category: categories[0],
-        price: "",
-        emoji: "☕",
-        active: true
-      };
+   // THEM / SUA MON
+if (modal.type === "product") {
+  const product = db.products.find(
+    item => item.id === modal.id
+  ) || {
+    id: "",
+    name: "",
+    categoryId: "",
+    category: "",
+    price: "",
+    emoji: "☕",
+    active: true
+  };
 
-      title = modal.id
-        ? "Chỉnh sửa món"
-        : "Thêm món mới";
+  title = modal.id
+    ? "Chỉnh sửa món"
+    : "Thêm món mới";
 
-      content = `
-        <form id="productForm">
+  content = `
+    <form id="productForm">
 
-          <div class="field">
-            <label>Tên món</label>
+      <div class="field">
+        <label>Mã sản phẩm</label>
+        <input
+          name="product_id"
+          maxlength="10"
+          required
+          value="${escapeHTML(product.id || "")}"
+          ${modal.id ? "readonly" : ""}
+        >
+      </div>
 
-            <input
-              name="name"
-              required
-              maxlength="90"
-              value="${escapeHTML(product.name)}">
-          </div>
-
+      <div class="field">
+        <label>Tên sản phẩm</label>
+        <input
+          type="text"
+          name="name"
+          placeholder="Ví dụ: Nước dừa tươi"
+          required
+          value="${escapeHTML(product.name || "")}"
+        >
+      </div>
           <div class="field">
             <label>Danh mục</label>
 
-            <select name="category">
+            
+<select name="category" required>
+  ${sqlCategories
+    .filter(c => c.is_active || c.category_id === product.categoryId)
+    .map(c => `
+      <option
+        value="${escapeHTML(c.category_id)}"
+        ${product.categoryId === c.category_id ? "selected" : ""}>
+        ${escapeHTML(c.category_name)}
+      </option>
+    `).join("")}
+</select>
 
-              ${categories.map(category => `
-                <option
-                  value="${escapeHTML(category)}"
-                  ${
-                    product.category === category
-                      ? "selected"
-                      : ""
-                  }>
-
-                  ${escapeHTML(category)}
-
-                </option>
-              `).join("")}
-
-            </select>
           </div>
 
           <div class="field">
@@ -2086,13 +2331,39 @@
           </div>
 
           <div class="field">
-            <label>Biểu tượng</label>
+  <label>Đường dẫn hình ảnh</label>
+  <input
+    type="url"
+    name="image_url"
+    maxlength="1000"
+    placeholder="Nhập đường dẫn hình ảnh"
+    value="${escapeHTML(product.imageUrl || "")}">
+</div>
 
-            <input
-              name="emoji"
-              maxlength="4"
-              value="${escapeHTML(product.emoji)}">
-          </div>
+<div class="field">
+  <label>Mô tả sản phẩm</label>
+  <textarea
+    name="description"
+    maxlength="500"
+    rows="3"
+    placeholder="Nhập mô tả sản phẩm..."
+  >${escapeHTML(product.description || "")}</textarea>
+</div>
+
+<div class="field">
+  <label>Tình trạng bán</label>
+  <select name="is_available">
+    <option value="1"
+      ${product.available !== false ? "selected" : ""}>
+      Đang bán
+    </option>
+
+    <option value="0"
+      ${product.available === false ? "selected" : ""}>
+      Ngừng bán
+    </option>
+  </select>
+</div>
 
           <div class="field">
             <label>Trạng thái</label>
@@ -2414,16 +2685,19 @@
   // =====================================================
   // 21. XU LY SU KIEN CLICK
   // =====================================================
-
-  app.addEventListener("click", event => {
+app.addEventListener("click", async event => {
+  
+    
     const target = event.target.closest(
-      "[data-action], [data-page], [data-table], " +
-      "[data-cat], [data-prod], [data-qty], " +
-      "[data-edit-product], [data-stock], " +
-      "[data-edit-employee], [data-period]"
-    );
+  "[data-action], [data-page], [data-table], " +
+  "[data-cat], [data-prod], [data-qty], " +
+  "[data-edit-product], [data-stop-product], " +
+  "[data-resume-product], " +
+  "[data-stock], [data-edit-employee], [data-period]"
+);
 
     if (!target) return;
+
 
     // CHUYEN TRANG
     if (target.dataset.page) {
@@ -2462,11 +2736,17 @@
     if (target.dataset.prod) {
       if (!checkOrderPermission()) return;
 
-      const product = db.products.find(
-        item =>
-          item.id === target.dataset.prod &&
-          item.active
-      );
+      
+const product = db.products.find(
+  item =>
+    item.id === target.dataset.prod &&
+    item.active &&
+    item.available === true &&
+    sqlCategories.some(category =>
+      category.category_id === item.categoryId &&
+      category.is_active
+    )
+);
 
       if (!product) return;
 
@@ -2506,18 +2786,104 @@
       render();
       return;
     }
-
-    // SUA MON
+    // ==========================================
+    // CHINH SUA SAN PHAM
+    // ==========================================
     if (target.dataset.editProduct) {
-      if (checkManager()) {
-        openModal(
-          "product",
-          target.dataset.editProduct
-        );
-      }
+      if (!checkManager()) return;
+
+      await openProductModal(
+        target.dataset.editProduct
+      );
 
       return;
     }
+
+    // ==========================================
+    // NGUNG BAN SAN PHAM
+    // ==========================================
+  if (target.dataset.stopProduct !== undefined) {
+       if (!checkManager()) return;
+
+  const id = target.dataset.stopProduct;
+
+  if (!confirm("Bạn có chắc muốn ngừng bán món này?")) {
+    return;
+  }
+
+  try {
+    target.disabled = true;
+
+    await stopProductInSQL(id);
+
+    notify("Đã ngừng bán sản phẩm!");
+
+  } catch (error) {
+    console.error(error);
+    notify(error.message, true);
+
+  } finally {
+    target.disabled = false;
+  }
+
+  return;
+}
+
+// MO BAN TRO LAI
+if (target.dataset.resumeProduct !== undefined) {
+  if (!checkManager()) return;
+
+  const id = target.dataset.resumeProduct;
+
+  if (!confirm("Bạn muốn mở bán lại món này?")) {
+    return;
+  }
+
+  try {
+    target.disabled = true;
+
+    await resumeProductInSQL(id);
+
+    notify("Đã mở bán lại sản phẩm!");
+
+  } catch (error) {
+    console.error(error);
+    notify(error.message, true);
+
+  } finally {
+    target.disabled = false;
+  }
+
+  return;
+}
+
+// MO BAN TRO LAI
+if (target.dataset.resumeProduct !== undefined) {
+  if (!checkManager()) return;
+
+  const id = target.dataset.resumeProduct;
+
+  if (!confirm("Bạn muốn mở bán lại món này?")) {
+    return;
+  }
+
+  try {
+    target.disabled = true;
+
+    await resumeProductInSQL(id);
+
+    notify("Đã mở bán lại sản phẩm!");
+
+  } catch (error) {
+    console.error(error);
+    notify(error.message, true);
+
+  } finally {
+    target.disabled = false;
+  }
+
+  return;
+}
 
     // NHAP XUAT KHO
     if (target.dataset.stock) {
@@ -2620,11 +2986,11 @@
         performTableAction("merge");
         break;
 
-      case "add-product":
-        if (checkManager()) {
-          openModal("product");
-        }
-        break;
+     case "add-product":
+  if (checkManager()) {
+     await openProductModal();
+  }
+  break;
 
       case "add-material":
         if (checkManager()) {
@@ -2656,18 +3022,17 @@
   // 22. XU LY THAY DOI SELECT
   // =====================================================
 
-  app.addEventListener("change", event => {
-    if (event.target.id === "tableSelect") {
-      const id = event.target.value;
+ app.addEventListener("input", event => {
+  if (event.target.id === "menuSearch") {
+    filterMenuProducts();
+  }
+});
 
-      if (!id) return;
-
-      state.tableId = id;
-
-      loadCart();
-      render();
-    }
-  });
+app.addEventListener("change", event => {
+  if (event.target.id === "menuCategory") {
+    filterMenuProducts();
+  }
+});
 
   // =====================================================
   // 23. XU LY FORM
@@ -2676,9 +3041,7 @@
   app.addEventListener("submit", async event => {
     const form = event.target;
 
-    if (!(form instanceof HTMLFormElement)) {
-      return;
-    }
+    if (!(form instanceof HTMLFormElement)) return;
 
     event.preventDefault();
 
@@ -2686,24 +3049,14 @@
       new FormData(form).entries()
     );
 
-    // -----------------------------------------
-    // DANG NHAP SQL SERVER
-    // -----------------------------------------
-
+    // DANG NHAP
     if (form.id === "loginForm") {
-      const username = String(
-        values.username || ""
-      ).trim();
-
-      const password = String(
-        values.password || ""
+      const username = String(values.username || "").trim();
+      const password = String(values.password || "");
+      const errorElement = form.querySelector("#loginError");
+      const submitButton = form.querySelector(
+        'button[type="submit"]'
       );
-
-      const errorElement =
-        form.querySelector("#loginError");
-
-      const submitButton =
-        form.querySelector('button[type="submit"]');
 
       if (errorElement) {
         errorElement.textContent = "";
@@ -2717,10 +3070,9 @@
 
       try {
         await loginWithSQL(username, password);
-
       } catch (error) {
         const message = error instanceof TypeError
-          ? "Không kết nối được backend. Hãy kiểm tra node server.js."
+          ? "Không kết nối được backend."
           : error.message;
 
         if (errorElement) {
@@ -2729,12 +3081,8 @@
         }
 
         notify(message, true);
-
       } finally {
-        if (
-          submitButton &&
-          submitButton.isConnected
-        ) {
+        if (submitButton && submitButton.isConnected) {
           submitButton.disabled = false;
           submitButton.textContent = "Đăng nhập →";
         }
@@ -2743,70 +3091,84 @@
       return;
     }
 
-    // Khong cho gui cac form quan ly khi chua dang nhap.
     if (!currentUser()) {
-      notify(
-        "Vui lòng đăng nhập trước.",
-        true
-      );
+      notify("Vui lòng đăng nhập trước.", true);
       return;
     }
 
-    // -----------------------------------------
-    // THEM / SUA MON
-    // -----------------------------------------
-
+    // THEM / SUA SAN PHAM
     if (form.id === "productForm") {
       if (!checkManager()) return;
 
+      const id = state.modal?.id || null;
+      const productId = String(
+        values.product_id || ""
+      ).trim();
+      const productName = String(
+        values.name || ""
+      ).trim();
+      const categoryId = String(
+        values.category || ""
+      ).trim();
       const price = Number(values.price);
 
       if (
-        !String(values.name || "").trim() ||
-        !Number.isFinite(price) ||
+        !productId ||
+        !productName ||
+        !categoryId ||
+        !Number.isSafeInteger(price) ||
         price < 0
       ) {
-        notify(
-          "Thông tin món không hợp lệ.",
-          true
-        );
+        notify("Thông tin sản phẩm không hợp lệ.", true);
         return;
       }
 
-      const product = db.products.find(
-        item => item.id === state.modal?.id
+      
+const payload = {
+  product_id: productId,
+  product_name: productName,
+  category_id: categoryId,
+
+  price: price,
+
+  image_url: String(
+    values.image_url || ""
+  ).trim() || null,
+
+  description: String(
+    values.description || ""
+  ).trim() || null,
+
+  is_active: values.active === "1",
+
+  is_available: values.is_available === "1"
+};
+
+      const submit = form.querySelector(
+        '[type="submit"]'
       );
 
-      const newValues = {
-        name: values.name.trim(),
-        category: values.category,
-        price,
-        emoji: values.emoji || "☕",
-        active: values.active === "1"
-      };
+      try {
+        if (submit) submit.disabled = true;
 
-      if (product) {
-        Object.assign(product, newValues);
-      } else {
-        db.products.push({
-          id: createId("P"),
-          ...newValues
-        });
+        if (id) {
+          await updateProductToSQL(id, payload);
+        } else {
+          await addProductToSQL(payload);
+        }
+
+        state.modal = null;
+        render();
+        notify("Đã lưu sản phẩm vào SQL Server!");
+      } catch (error) {
+        notify(error.message, true);
+        if (submit) submit.disabled = false;
       }
 
-      saveDatabase();
-
-      state.modal = null;
-      render();
-
-      notify("Đã lưu thông tin món.");
       return;
     }
 
-    // -----------------------------------------
     // THANH TOAN
-    // -----------------------------------------
-
     if (form.id === "payForm") {
       checkout(
         values.method,
@@ -2815,16 +3177,10 @@
       return;
     }
 
-    // -----------------------------------------
     // NHAP / XUAT KHO
-    // -----------------------------------------
-
     if (form.id === "stockForm") {
       if (!canManageStock()) {
-        notify(
-          "Không có quyền quản lý kho.",
-          true
-        );
+        notify("Không có quyền quản lý kho.", true);
         return;
       }
 
@@ -2839,10 +3195,15 @@
         !Number.isFinite(quantity) ||
         quantity <= 0
       ) {
-        notify(
-          "Số lượng không hợp lệ.",
-          true
-        );
+        notify("Số lượng không hợp lệ.", true);
+        return;
+      }
+
+      if (
+        values.operation !== "in" &&
+        values.operation !== "out"
+      ) {
+        notify("Thao tác kho không hợp lệ.", true);
         return;
       }
 
@@ -2876,7 +3237,6 @@
       });
 
       saveDatabase();
-
       state.modal = null;
       render();
 
@@ -2884,19 +3244,18 @@
       return;
     }
 
-    // -----------------------------------------
     // THEM NGUYEN LIEU
-    // -----------------------------------------
-
     if (form.id === "materialForm") {
       if (!checkManager()) return;
 
+      const name = String(values.name || "").trim();
+      const unit = String(values.unit || "").trim();
       const stock = Number(values.stock);
       const minimum = Number(values.minimum);
 
       if (
-        !String(values.name || "").trim() ||
-        !String(values.unit || "").trim() ||
+        !name ||
+        !unit ||
         !Number.isFinite(stock) ||
         !Number.isFinite(minimum) ||
         stock < 0 ||
@@ -2911,14 +3270,13 @@
 
       db.materials.push({
         id: createId("NL"),
-        name: values.name.trim(),
-        unit: values.unit.trim(),
+        name,
+        unit,
         stock,
         minimum
       });
 
       saveDatabase();
-
       state.modal = null;
       render();
 
@@ -2926,10 +3284,7 @@
       return;
     }
 
-    // -----------------------------------------
     // THEM / SUA NHAN VIEN DEMO
-    // -----------------------------------------
-
     if (form.id === "employeeForm") {
       if (!checkManager()) return;
 
@@ -2964,10 +3319,7 @@
       );
 
       if (usernameExists) {
-        notify(
-          "Tên đăng nhập đã tồn tại.",
-          true
-        );
+        notify("Tên đăng nhập đã tồn tại.", true);
         return;
       }
 
@@ -2977,10 +3329,6 @@
         role: values.role,
         active: values.active === "1"
       };
-
-      // Phan nhan vien nay van la demo.
-      // Khong luu mat khau vao localStorage.
-      // Tai khoan SQL Server phai duoc tao qua backend.
 
       if (staff) {
         Object.assign(staff, data);
@@ -2992,12 +3340,11 @@
       }
 
       saveDatabase();
-
       state.modal = null;
       render();
 
       notify(
-        "Đã lưu thông tin nhân viên demo. " +
+        "Đã lưu nhân viên demo. " +
         "Tài khoản SQL Server chưa thay đổi."
       );
 
@@ -3018,16 +3365,23 @@
     state.tableId = db.tables[0].id;
   }
 
-  // Hien thi man hinh dang nhap truoc.
   render();
+  // SU KIEN TIM KIEM SAN PHAM
+app.addEventListener("input", event => {
+  if (event.target.id === "menuSearch") {
+    filterMenuProducts();
+  }
+});
 
-  // Xac minh token voi backend.
-  restoreSession();
+// SU KIEN LOC DANH MUC
+app.addEventListener("change", event => {
+  if (event.target.id === "menuCategory") {
+    filterMenuProducts();
+  }
+});
 
-  // Lay thuc don va ban tu SQL Server.
-  loadProductsFromSQL();
-  loadTablesFromSQL();
-
+  db.products = [];
+restoreSession();
   console.log(
     "MOC Coffee POS - Frontend initialized."
   );
