@@ -12,7 +12,6 @@ const recipeRoutes = require("./routes/recipeRoutes");
 const app = express();
 const orderRoutes = require("./routes/orderRoutes");
 
-const app = express();
 
 app.use(cors());
 app.use(express.json());
