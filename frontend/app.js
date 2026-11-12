@@ -55,18 +55,6 @@
     Date.now().toString(36).toUpperCase() +
     Math.random().toString(36).slice(2, 6).toUpperCase();
 
-    // Tao ma nguyen lieu tu dong
-function createMaterialId() {
-    const numbers = db.materials
-        .map(item => {
-            const match = /^NL(\d+)$/.exec(item.id);
-            return match ? Number(match[1]) : 0;
-        });
-
-    const next = Math.max(0, ...numbers) + 1;
-
-    return "NL" + String(next).padStart(2, "0");
-}
   // =====================================================
   // 2. DANH MUC VA PHAN QUYEN
   // =====================================================
@@ -86,7 +74,6 @@ function createMaterialId() {
     ["payments", "💳", "Thanh toán"],
     ["inventory", "📦", "Kho nguyên liệu"],
     ["employees", "👥", "Nhân viên"],
-    ["accounts", "🔐", "Quản lý tài khoản"],
     ["reports", "📈", "Báo cáo"]
   ];
 
@@ -118,19 +105,13 @@ function createMaterialId() {
     return roles[role] || role;
   }
 
-  
-const normalizeRole = role => ({
+  const normalizeRole = role => ({
     admin: "manager",
     manager: "manager",
     phucvu: "service",
     thungan: "cashier",
     kho: "stock"
-}[role] || null);
-
-function isAdmin() {
-    return authenticatedUser?.originalRole === "admin";
-}
-
+  }[role] || null);
 
   // =====================================================
   // 3. DU LIEU MAU
@@ -317,16 +298,13 @@ function isAdmin() {
 
     userId = user.userId;
 
-    
-authenticatedUser = {
-    id: user.userId,
-    name: user.username,
-    username: user.username,
-    role,
-    originalRole: user.role,
-    active: true
-};
-
+    authenticatedUser = {
+      id: user.userId,
+      name: user.username,
+      username: user.username,
+      role,
+      active: true
+    };
   }
 
   function clearSession() {
@@ -513,24 +491,19 @@ authenticatedUser = {
     return authenticatedUser;
   }
 
-function isManager() {
+  function isManager() {
     return currentUser()?.role === "manager";
-}
+  }
 
-  
   function hasPermission(page) {
     const account = currentUser();
 
     if (!account) return false;
 
-    // Chi Admin duoc truy cap quan ly tai khoan
-    if (page === "accounts") {
-        return isAdmin();
-    }
-
-    return permissions[account.role]?.includes(page) || false;
+    return (
+      permissions[account.role]?.includes(page) || false
+    );
   }
-
 
   function canManageOrders() {
     return [
@@ -604,15 +577,8 @@ function isManager() {
       return;
     }
 
-    
-state.page = page;
-render();
-
-// Tu dong tai danh sach khi Admin mo trang
-if (page === "accounts" && isAdmin()) {
-    loadAccountsFromSQL();
-}
-
+    state.page = page;
+    render();
   }
 
   function checkManager() {
@@ -838,176 +804,8 @@ if (page === "accounts" && isAdmin()) {
       ${modalHTML()}
     `;
   }
-let accountList = [];
-let accountLoading = false;
 
-
-async function loadAccountsFromSQL() {
-    if (!isAdmin()) return;
-
-    const token = sessionStorage.getItem(TOKEN_KEY);
-
-    if (!token) {
-        notify("Vui lòng đăng nhập lại.", true);
-        return;
-    }
-
-    accountLoading = true;
-
-    try {
-        const response = await fetch(`${API_URL}/accounts`, {
-            headers: {
-                Authorization: `Bearer ${token}`
-            }
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                result.error || "Không thể tải danh sách tài khoản."
-            );
-        }
-
-        accountList = result;
-
-    } catch (error) {
-        console.error("Lỗi tải danh sách tài khoản:", error);
-        notify(error.message, true);
-
-    } finally {
-        accountLoading = false;
-
-        if (state.page === "accounts" && isAdmin()) {
-            render();
-        }
-    }
-}
-function accountsPage() {
-    if (!isAdmin()) {
-        return heading(
-            "Không có quyền truy cập",
-            "Chỉ Admin được quản lý tài khoản."
-        );
-    }
-
-    // Chống chèn mã HTML từ dữ liệu tài khoản
-    const escapeAccountHTML = value =>
-        String(value ?? "").replace(/[&<>"']/g, char => ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;"
-        })[char]);
-
-    const roleNames = {
-        admin: "Admin",
-        manager: "Quản lý",
-        phucvu: "Phục vụ",
-        thungan: "Thu ngân",
-        kho: "Kho"
-    };
-
-    const rows = accountList.map((account, index) => {
-        const role = roleNames[account.role] || account.role;
-
-        const status = account.is_active
-            ? "🟢 Hoạt động"
-            : "🔴 Đã khóa";
-
-        const createdAt = account.created_at
-            ? new Date(account.created_at).toLocaleDateString("vi-VN")
-            : "—";
-
-        
-return `
-    <tr>
-        <td>${index + 1}</td>
-        <td>${escapeAccountHTML(account.username)}</td>
-        <td>${escapeAccountHTML(account.full_name || "Chưa liên kết")}</td>
-        <td>${escapeAccountHTML(role)}</td>
-        <td>${status}</td>
-        <td>${escapeAccountHTML(createdAt)}</td>
-        <td>
-            
-${account.role === "admin" ? "—" : `
-    <button
-        type="button"
-        class="btn small"
-        data-action="change-account-role"
-        data-account-id="${escapeAccountHTML(account.user_id)}">
-        ✏️ Đổi quyền
-    </button>
-
-    <button
-        type="button"
-        class="btn small"
-        data-action="toggle-account-status"
-        data-account-id="${escapeAccountHTML(account.user_id)}">
-        ${account.is_active
-            ? "🔒 Khóa"
-            : "🔓 Mở khóa"}
-    </button>
-`}
-
-        </td>
-    </tr>
-`;
-
-    }).join("");
-
-    return heading(
-        "Quản lý tài khoản",
-        "Danh sách tài khoản được lưu trong SQL Server"
-    ) + `
-        <div class="card">
-            <div class="split">
-                <h2>🔐 Danh sách tài khoản</h2>
-
-                <button
-                    type="button"
-                    class="btn primary"
-                    data-action="add-account">
-                    ➕ Tạo tài khoản mới
-                </button>
-            </div>
-
-            <div style="overflow-x:auto; margin-top:20px;">
-                <table style="width:100%; border-collapse:collapse;">
-                    <thead>
-                        <tr>
-                            <th>STT</th>
-                            <th>Tên đăng nhập</th>
-                            <th>Họ tên nhân viên</th>
-                            <th>Quyền</th>
-                            <th>Trạng thái</th>
-                            <th>Ngày tạo</th>
-                            <th>Thao tác</th>
-                        </tr>
-                    </thead>
-
-                    <tbody>
-                        ${accountLoading
-                            ? '<tr><td colspan="7">Đang tải...</td></tr>'
-                            : rows || '<tr><td colspan="7">Chưa có dữ liệu. Bấm Làm mới để tải danh sách.</td></tr>'
-                        }
-                    </tbody>
-                </table>
-            </div>
-
-            <button
-                type="button"
-                class="btn"
-                data-action="refresh-accounts"
-                style="margin-top:20px;">
-                🔄 Làm mới danh sách
-            </button>
-        </div>
-    `;
-}
   function pageContent() {
-
     const pages = {
       dashboard: dashboardPage,
       tables: tablesPage,
@@ -1016,7 +814,6 @@ ${account.role === "admin" ? "—" : `
       payments: paymentsPage,
       inventory: inventoryPage,
       employees: employeesPage,
-      accounts: accountsPage,
       reports: reportsPage
     };
 
@@ -1165,105 +962,48 @@ ${account.role === "admin" ? "—" : `
   // =====================================================
 
   function tablesPage() {
+    const busy = db.tables.filter(
+      table => getOpenOrder(table.id)
+    ).length;
 
-const busy = db.tables.filter(
-  table => table.status === "occupied"
-).length;
-
-const available = db.tables.filter(
-  table => table.status === "available"
-).length;
-
-
-   
     const content = db.tables.map(table => {
       const order = getOpenOrder(table.id);
 
-      const statusInfo = {
-        available: ["Bàn trống", "green"],
-        occupied: ["Đang phục vụ", "orange"],
-        reserved: ["Đã đặt trước", "orange"],
-        maintenance: ["Đang bảo trì", "red"]
-      };
-
-      const [statusText, statusColor] =
-        statusInfo[table.status] || ["Không xác định", ""];
-
       return `
-        <div class="table-box ${table.status === "occupied" ? "busy" : ""}">
+        <button
+          class="table-box ${order ? "busy" : ""}"
+          data-table="${escapeHTML(table.id)}">
 
           <div class="split">
             <b>${escapeHTML(table.id)}</b>
             <span>🪑 ${table.seats} chỗ</span>
           </div>
 
-          <div class="muted">
-            ${escapeHTML(table.name || table.id)}
-          </div>
-
           <div class="bottom">
-            ${pill(statusText, statusColor)}
+
+            ${pill(
+              order ? "Đang phục vụ" : "Bàn trống",
+              order ? "orange" : "green"
+            )}
+
+            <span>→</span>
           </div>
 
           ${order
             ? `<small>${money(calculateTotal(order.items))}</small>`
             : ""}
 
-          <div class="actions">
-            <button
-              type="button"
-              class="btn"
-              data-edit-table="${escapeHTML(table.id)}">
-              ✏️ Sửa bàn
-            </button>
-
-<button
-  type="button"
-  class="btn"
-  data-status-table="${escapeHTML(table.id)}">
-  🔄 Đổi trạng thái
-</button>
-
-<button
-  type="button"
-  class="btn"
-  data-delete-table="${escapeHTML(table.id)}">
-  🗑️ Xóa bàn
-</button>
-
-            
-
-            <button
-              type="button"
-              class="btn"
-              data-table="${escapeHTML(table.id)}">
-              Chọn bàn →
-            </button>
-          </div>
-
-        </div>
+        </button>
       `;
     }).join("");
 
-
-
     return heading(
       "Quản lý bàn",
-`${available} bàn trống · ${busy} bàn đang phục vụ`,
-      `
-        <button
-          type="button"
-          class="btn primary"
-          data-action="add-table">
-          + Thêm bàn
-        </button>
-
-        ${canManageOrders()
-          ? button("🛒 Tạo đơn mới", "new-order", "primary")
-          : ""}
-      `
+      `${db.tables.length - busy} bàn trống · ${busy} bàn đang phục vụ`,
+      canManageOrders()
+        ? button("🛒 Tạo đơn mới", "new-order", "primary")
+        : ""
     ) + `
-
 
       <div class="table-grid">
         ${content}
@@ -1357,30 +1097,7 @@ const available = db.tables.filter(
     `;
   }
 
-async function updateTableStatus(tableId, status) {
-  const response = await fetch(
-    `${API_URL}/tables/${encodeURIComponent(tableId)}/status`,
-    {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ status })
-    }
-  );
-
-  const result = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      result.error || `Không thể cập nhật bàn ${tableId}`
-    );
-  }
-
-  return result;
-}
-
-async function performTableAction(mode) {
+  function performTableAction(mode) {
     if (!checkOrderPermission()) return;
 
     const sourceId =
@@ -1407,62 +1124,34 @@ async function performTableAction(mode) {
       return;
     }
 
+    if (mode === "transfer") {
+      if (destination) {
+        notify(
+          "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
+          true
+        );
+        return;
+      }
 
-if (mode === "transfer") {
-  if (destination) {
-    notify(
-      "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
-      true
-    );
-    return;
-  }
+      source.tableId = destinationId;
+      source.updatedAt = now();
 
-  const targetTable = db.tables.find(
-    table => table.id === destinationId
-  );
+      if (state.tableId === sourceId) {
+        state.tableId = destinationId;
+        loadCart();
+      }
 
-  if (!targetTable || targetTable.status !== "available") {
-    notify("Bàn đích không ở trạng thái bàn trống.", true);
-    return;
-  }
+      saveDatabase();
+      render();
 
-  try {
-    // Cập nhật trạng thái trong SQL Server
-    await updateTableStatus(destinationId, "occupied");
+      notify(
+        `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
+      );
 
-    // Chuyển đơn hàng sang bàn đích
-    source.tableId = destinationId;
-    source.updatedAt = now();
-
-    // Giải phóng bàn nguồn nếu không còn đơn
-    if (!getOpenOrder(sourceId)) {
-      await updateTableStatus(sourceId, "available");
+      return;
     }
 
-    if (state.tableId === sourceId) {
-      state.tableId = destinationId;
-    }
-
-    loadCart();
-    saveDatabase();
-
-    await loadTablesFromSQL();
-
-    notify(
-      `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
-    );
-
-  } catch (error) {
-    console.error("Lỗi chuyển bàn:", error);
-    notify(
-      error.message || "Không thể cập nhật trạng thái bàn.",
-      true
-    );
-  }
-
-  return;
-}
-if (mode === "merge") {
+    if (mode === "merge") {
       if (!destination) {
         notify(
           "Bàn đích chưa có đơn hàng để gộp.",
@@ -1490,24 +1179,6 @@ if (mode === "merge") {
       source.mergedAt = now();
 
       destination.updatedAt = now();
-            // Đồng bộ trạng thái bàn với SQL Server
-      try {
-        await updateTableStatus(destinationId, "occupied");
-
-        if (!getOpenOrder(sourceId)) {
-          await updateTableStatus(sourceId, "available");
-        }
-      } catch (error) {
-        console.error("Lỗi cập nhật trạng thái khi gộp bàn:", error);
-        saveDatabase();
-        await loadTablesFromSQL();
-        notify(
-          "Đơn đã gộp nhưng cập nhật trạng thái SQL thất bại: " +
-          error.message,
-          true
-        );
-        return;
-      }
 
       if (
         state.tableId === sourceId ||
@@ -1518,7 +1189,7 @@ if (mode === "merge") {
       }
 
       saveDatabase();
-      await loadTablesFromSQL();
+      render();
 
       notify(
         `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
@@ -2082,25 +1753,15 @@ if (mode === "merge") {
         </td>
 
         <td>
-  ${canManageStock()
-    ? `<button
-         type="button"
-         class="btn small"
-         data-stock="${escapeHTML(material.id)}">
-         Nhập / xuất
-       </button>`
-    : "Chỉ xem"}
-
-  ${isManager()
-    ? `<button
-         type="button"
-         class="btn small"
-         data-delete-material="${escapeHTML(material.id)}"
-         style="color: red; margin-left: 8px;">
-         Xóa
-       </button>`
-    : ""}
-</td>
+          ${canManageStock()
+            ? `<button
+                 type="button"
+                 class="btn small"
+                 data-stock="${escapeHTML(material.id)}">
+                 Nhập / xuất
+               </button>`
+            : "Chỉ xem"}
+        </td>
 
       </tr>
     `).join("");
@@ -2360,247 +2021,6 @@ if (mode === "merge") {
 
     let title = "";
     let content = "";
-
-    // POPUP TAO TAI KHOAN - CHI ADMIN
-    if (modal.type === "account") {
-        if (!isAdmin()) return "";
-
-        title = "Tạo tài khoản mới";
-
-        content = `
-            <form id="accountForm">
-
-                <div class="field">
-                    <label>Tên đăng nhập</label>
-                    <input
-                        name="username"
-                        type="text"
-                        minlength="3"
-                        maxlength="50"
-                        pattern="[A-Za-z0-9_]+"
-                        autocomplete="off"
-                        placeholder="Ví dụ: nhanvien05"
-                        required>
-                </div>
-
-                <div class="field">
-                    <label>Mật khẩu</label>
-                    <input
-                        name="password"
-                        type="password"
-                        minlength="12"
-                        maxlength="72"
-                        autocomplete="new-password"
-                        placeholder="Ít nhất 12 ký tự"
-                        required>
-                </div>
-
-                <div class="field">
-                    <label>Phân quyền</label>
-                    <select name="role" required>
-                        <option value="">-- Chọn quyền --</option>
-                        <option value="manager">Quản lý</option>
-                        <option value="phucvu">Nhân viên phục vụ</option>
-                        <option value="thungan">Thu ngân</option>
-                        <option value="kho">Nhân viên kho</option>
-                    </select>
-                </div>
-
-                <div class="field">
-                    <label>Mã nhân viên (không bắt buộc)</label>
-                    <input
-                        name="employee_id"
-                        type="text"
-                        maxlength="10"
-                        placeholder="Ví dụ: NV02">
-                </div>
-
-                ${formButtons("Tạo tài khoản")}
-
-            </form>
-        `;
-    }
-
-    // POPUP DOI QUYEN TAI KHOAN
-    if (modal.type === "account-role") {
-        if (!isAdmin()) return "";
-
-        const account = accountList.find(
-            item => item.user_id === modal.id
-        );
-
-        if (!account || account.role === "admin") {
-            return "";
-        }
-
-        const roleNames = {
-            manager: "Quản lý",
-            phucvu: "Nhân viên phục vụ",
-            thungan: "Thu ngân",
-            kho: "Nhân viên kho"
-        };
-
-        title = "Thay đổi quyền tài khoản";
-
-        const roleOptions = Object.entries(roleNames)
-            .map(([value, label]) => `
-                <option
-                    value="${value}"
-                    ${account.role === value ? "selected" : ""}>
-                    ${label}
-                </option>
-            `).join("");
-
-        content = `
-            <form id="accountRoleForm">
-                <div class="field">
-                    <label>Tên đăng nhập</label>
-                    <input
-                        type="text"
-                        value="${String(account.username).replace(/[&<>"']/g, c => ({
-                            "&": "&amp;",
-                            "<": "&lt;",
-                            ">": "&gt;",
-                            '"': "&quot;",
-                            "'": "&#39;"
-                        })[c])}"
-                        disabled>
-                </div>
-
-                <div class="field">
-                    <label>Quyền mới</label>
-                    <select name="role" required>
-                        ${roleOptions}
-                    </select>
-                </div>
-
-                ${formButtons("Lưu quyền")}
-            </form>
-        `;
-    }
-
-    if (modal.type === "table") {
-      title = "Thêm bàn mới";
-
-      content = `
-        <form id="tableForm">
-          <div class="field">
-            <label>Mã bàn</label>
-            <input
-              name="table_id"
-              maxlength="10"
-              placeholder="Ví dụ: B14"
-              required>
-          </div>
-
-          <div class="field">
-            <label>Tên bàn</label>
-            <input
-              name="table_name"
-              maxlength="100"
-              placeholder="Ví dụ: Bàn VIP 14"
-              required>
-          </div>
-
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="4"
-              required>
-          </div>
-
-          ${formButtons("Lưu bàn")}
-        </form>
-      `;
-    }
-
-    // POPUP SUA BAN
-    if (modal.type === "edit-table") {
-      const table = db.tables.find(
-        item => item.id === modal.tableId
-      );
-
-      if (!table) return "";
-
-      title = "Sửa thông tin bàn";
-
-      content = `
-        <form id="editTableForm">
-          <div class="field">
-            <label>Mã bàn</label>
-            <input
-              value="${escapeHTML(table.id)}"
-              disabled>
-          </div>
-
-          <div class="field">
-            <label>Tên bàn</label>
-            <input
-              name="table_name"
-              maxlength="100"
-              value="${escapeHTML(table.name)}"
-              required>
-          </div>
-
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="${table.seats}"
-              required>
-          </div>
-
-          ${formButtons("Lưu thay đổi")}
-        </form>
-      `;
-    }
-
-    // POPUP DOI TRANG THAI BAN
-    if (modal.type === "status-table") {
-      const table = db.tables.find(
-        item => item.id === modal.tableId
-      );
-
-      if (!table) return "";
-
-      title = "Đổi trạng thái bàn " + table.id;
-
-      content = `
-        <form id="statusTableForm">
-          <div class="field">
-            <label>Trạng thái bàn</label>
-
-            <select name="status" required>
-              <option value="available" ${table.status === "available" ? "selected" : ""}>
-                Bàn trống
-              </option>
-
-              <option value="occupied" ${table.status === "occupied" ? "selected" : ""}>
-                Đang phục vụ
-              </option>
-
-              <option value="reserved" ${table.status === "reserved" ? "selected" : ""}>
-                Đã đặt trước
-              </option>
-
-              <option value="maintenance" ${table.status === "maintenance" ? "selected" : ""}>
-                Đang bảo trì
-              </option>
-            </select>
-          </div>
-
-          ${formButtons("Lưu trạng thái")}
-        </form>
-      `;
-    }
-
-
-
 
     // THEM / SUA MON
     if (modal.type === "product") {
@@ -2995,203 +2415,15 @@ if (mode === "merge") {
   // 21. XU LY SU KIEN CLICK
   // =====================================================
 
-app.addEventListener("click", async event => {
-
-    // MO POPUP THEM BAN
-    const addTableButton = event.target.closest(
-      '[data-action="add-table"]'
-    );
-
-    if (addTableButton) {
-      if (!checkManager()) return;
-
-      openModal("table");
-      return;
-    }
-
-
+  app.addEventListener("click", event => {
     const target = event.target.closest(
       "[data-action], [data-page], [data-table], " +
-      "[data-edit-table], [data-status-table], [data-delete-table], " +
       "[data-cat], [data-prod], [data-qty], " +
       "[data-edit-product], [data-stock], " +
-   "[data-edit-employee], [data-period], [data-delete-material]"
+      "[data-edit-employee], [data-period]"
     );
-
 
     if (!target) return;
-// ============================================
-// XOA NGUYEN LIEU
-// ============================================
-
-if (target.dataset.deleteMaterial !== undefined) {
-
-    // Chi quan ly moi duoc xoa
-    if (!isManager()) {
-        notify("Bạn không có quyền xóa nguyên liệu.", true);
-        return;
-    }
-
-    const materialId = target.dataset.deleteMaterial;
-
-    // Tim nguyen lieu
-    const material = db.materials.find(
-        item => item.id === materialId
-    );
-
-    if (!material) {
-        notify("Không tìm thấy nguyên liệu.", true);
-        return;
-    }
-
-    // Kiem tra lich su nhap/xuat
-    const hasHistory = db.transactions.some(
-        item => item.materialId === materialId
-    );
-
-    if (hasHistory) {
-        notify(
-            "Nguyên liệu đã có lịch sử nhập/xuất, không thể xóa.",
-            true
-        );
-        return;
-    }
-
-    // Xac nhan truoc khi xoa
-    const confirmed = window.confirm(
-        "Bạn có chắc chắn muốn xóa nguyên liệu: " +
-        material.name +
-        "?\n\nThao tác này không thể hoàn tác."
-    );
-
-    if (!confirmed) {
-        return;
-    }
-
-    // Xoa nguyen lieu khoi danh sach
-    db.materials = db.materials.filter(
-        item => item.id !== materialId
-    );
-
-    // Luu du lieu
-    saveDatabase();
-
-    // Cap nhat giao dien
-    render();
-
-    notify("Đã xóa nguyên liệu " + material.name);
-
-    return;
-}
-    // CHUYEN TRANG
-    if (target.dataset.page) {
-      changePage(target.dataset.page);
-      return;
-    }
-    // XOA MEM BAN TRONG SQL SERVER
-    if (target.dataset.deleteTable) {
-      if (!checkManager()) return;
-
-      const tableId = target.dataset.deleteTable;
-
-      const table = db.tables.find(
-        item => item.id === tableId
-      );
-
-      if (!table) {
-        notify("Không tìm thấy bàn!", true);
-        return;
-      }
-
-      // Khong cho xoa ban dang phuc vu
-      if (
-        table.status === "occupied" ||
-        getOpenOrder(tableId)
-      ) {
-        notify("Không thể xóa bàn đang phục vụ!", true);
-        return;
-      }
-
-      const confirmed = confirm(
-        `Bạn có chắc muốn xóa ${table.name || table.id} không?`
-      );
-
-      if (!confirmed) return;
-
-      try {
-        const response = await fetch(
-          `${API_URL}/tables/${encodeURIComponent(tableId)}`,
-          {
-            method: "DELETE"
-          }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Không thể xóa bàn."
-          );
-        }
-
-        await loadTablesFromSQL();
-
-        notify("Xóa bàn thành công!");
-
-      } catch (error) {
-        console.error("Lỗi xóa bàn:", error);
-        notify(error.message, true);
-      }
-
-      return;
-    }
-
-
-    // MO POPUP DOI TRANG THAI BAN
-    if (target.dataset.statusTable) {
-      if (!checkManager()) return;
-
-      const table = db.tables.find(
-        item => item.id === target.dataset.statusTable
-      );
-
-      if (!table) {
-        notify("Không tìm thấy bàn!", true);
-        return;
-      }
-
-      state.modal = {
-        type: "status-table",
-        tableId: table.id
-      };
-
-      render();
-      return;
-    }
-
-
-    // MO POPUP SUA BAN
-    if (target.dataset.editTable) {
-      if (!checkManager()) return;
-
-      const table = db.tables.find(
-        item => item.id === target.dataset.editTable
-      );
-
-      if (!table) {
-        alert("Không tìm thấy bàn cần sửa!");
-        return;
-      }
-
-      state.modal = {
-        type: "edit-table",
-        tableId: table.id
-      };
-
-      render();
-      return;
-    }
-
 
     // CHUYEN TRANG
     if (target.dataset.page) {
@@ -3406,125 +2638,6 @@ if (target.dataset.deleteMaterial !== undefined) {
         }
         break;
 
-case "add-account":
-  if (!isAdmin()) {
-    notify("Chỉ Admin mới được tạo tài khoản.", true);
-    break;
-  }
-
-case "change-account-role": {
-    if (!isAdmin()) {
-        notify("Chi Admin moi duoc doi quyen.", true);
-        break;
-    }
-
-    const accountId = target.dataset.accountId;
-
-    const account = accountList.find(
-        item => item.user_id === accountId
-    );
-
-    if (!account || account.role === "admin") {
-        notify("Khong the thay doi quyen tai khoan nay.", true);
-        break;
-    }
-
-    openModal("account-role", accountId);
-    break;
-}
-
-case "toggle-account-status": {
-    if (!isAdmin()) {
-        notify("Chi Admin moi duoc khoa tai khoan.", true);
-        break;
-    }
-
-    const accountId = target.dataset.accountId;
-
-    const account = accountList.find(
-        item => item.user_id === accountId
-    );
-
-    if (!account || account.role === "admin") {
-        notify("Khong the thay doi tai khoan nay.", true);
-        break;
-    }
-
-    const newStatus = !Boolean(account.is_active);
-
-    const actionName = newStatus ? "mo khoa" : "khoa";
-
-    if (!confirm(
-        `Ban co chac muon ${actionName} tai khoan ${account.username}?`
-    )) {
-        break;
-    }
-
-    const token = sessionStorage.getItem(TOKEN_KEY);
-
-    if (!token) {
-        notify("Phien dang nhap da het han.", true);
-        break;
-    }
-
-    // Chan bam nhieu lan trong khi dang xu ly
-    const actionButton = target;
-    actionButton.disabled = true;
-
-    try {
-        const response = await fetch(
-            `${API_URL}/accounts/${encodeURIComponent(accountId)}/status`,
-            {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    is_active: newStatus
-                })
-            }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                result.error || "Khong the cap nhat trang thai."
-            );
-        }
-
-        await loadAccountsFromSQL();
-
-        notify(
-            newStatus
-                ? "Mo khoa tai khoan thanh cong!"
-                : "Khoa tai khoan thanh cong!"
-        );
-
-    } catch (error) {
-        console.error("Loi khoa/mo khoa tai khoan:", error);
-        notify(error.message, true);
-
-    } finally {
-        if (actionButton.isConnected) {
-            actionButton.disabled = false;
-        }
-    }
-
-    break;
-}
-
-case "refresh-accounts":
-    if (!isAdmin()) {
-        notify("Chi Admin duoc xem danh sach tai khoan.", true);
-        break;
-    }
-
-    loadAccountsFromSQL();
-    break;
-
-
       case "close-modal":
         if (
           target.classList.contains("modal-cover") &&
@@ -3561,205 +2674,6 @@ case "refresh-accounts":
   // =====================================================
 
   app.addEventListener("submit", async event => {
-
-    // LUU TRANG THAI BAN VAO SQL SERVER
-    if (event.target.id === "statusTableForm") {
-      event.preventDefault();
-
-      if (!checkManager()) return;
-
-      const tableId = state.modal?.tableId;
-
-      if (!tableId) {
-        notify("Không tìm thấy mã bàn!", true);
-        return;
-      }
-
-      const formData = new FormData(event.target);
-      const status = String(formData.get("status") || "");
-
-      const validStatuses = [
-        "available",
-        "occupied",
-        "reserved",
-        "maintenance"
-      ];
-
-      if (!validStatuses.includes(status)) {
-        notify("Trạng thái bàn không hợp lệ!", true);
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          `${API_URL}/tables/${encodeURIComponent(tableId)}/status`,
-          {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ status })
-          }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Không thể đổi trạng thái bàn."
-          );
-        }
-
-        state.modal = null;
-
-        await loadTablesFromSQL();
-
-        notify("Đổi trạng thái bàn thành công!");
-
-      } catch (error) {
-        console.error("Lỗi đổi trạng thái bàn:", error);
-        notify(error.message, true);
-      }
-
-      return;
-    }
-
-
-    // SUA THONG TIN BAN TRONG SQL SERVER
-    if (event.target.id === "editTableForm") {
-      event.preventDefault();
-
-      if (!checkManager()) return;
-
-      const tableId = state.modal?.tableId;
-
-      if (!tableId) {
-        alert("Không tìm thấy mã bàn cần sửa!");
-        return;
-      }
-
-      const formData = new FormData(event.target);
-
-      const table_name = String(
-        formData.get("table_name") || ""
-      ).trim();
-
-      const seats = Number(formData.get("seats"));
-
-      if (
-        !table_name ||
-        table_name.length > 100 ||
-        !Number.isInteger(seats) ||
-        seats <= 0
-      ) {
-        alert("Tên bàn hoặc số ghế không hợp lệ!");
-        return;
-      }
-
-      try {
-        const response = await fetch(
-          `${API_URL}/tables/${encodeURIComponent(tableId)}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              table_name,
-              seats
-            })
-          }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Không thể sửa bàn."
-          );
-        }
-
-        state.modal = null;
-
-        await loadTablesFromSQL();
-
-        alert("Cập nhật bàn thành công!");
-
-      } catch (error) {
-        console.error("Lỗi sửa bàn:", error);
-        alert(error.message);
-      }
-
-      return;
-    }
-
-
-    // THEM BAN VAO SQL SERVER
-    if (event.target.id === "tableForm") {
-      event.preventDefault();
-
-      if (!checkManager()) return;
-
-      const form = event.target;
-      const formData = new FormData(form);
-
-      const table_id = String(
-        formData.get("table_id") || ""
-      ).trim().toUpperCase();
-
-      const table_name = String(
-        formData.get("table_name") || ""
-      ).trim();
-
-      const seats = Number(formData.get("seats"));
-
-      if (
-        !table_id ||
-        table_id.length > 10 ||
-        !table_name ||
-        table_name.length > 100 ||
-        !Number.isInteger(seats) ||
-        seats <= 0
-      ) {
-        notify("Thông tin bàn không hợp lệ.", true);
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/tables`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            table_id,
-            table_name,
-            seats
-          })
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Không thể thêm bàn."
-          );
-        }
-
-        state.modal = null;
-
-        await loadTablesFromSQL();
-
-        notify("Thêm bàn thành công!");
-
-      } catch (error) {
-        console.error("Lỗi thêm bàn:", error);
-        notify(error.message, true);
-      }
-
-      return;
-    }
-
     const form = event.target;
 
     if (!(form instanceof HTMLFormElement)) {
@@ -3837,170 +2751,6 @@ case "refresh-accounts":
       );
       return;
     }
-
-    
-    // ADMIN TAO TAI KHOAN MOI
-    if (form.id === "accountForm") {
-      if (!isAdmin()) {
-        notify("Chi Admin duoc tao tai khoan.", true);
-        return;
-      }
-
-      const token = sessionStorage.getItem(TOKEN_KEY);
-
-      if (!token) {
-        notify("Phien dang nhap da het. Hay dang nhap lai.", true);
-        return;
-      }
-
-      const username = String(values.username || "").trim();
-      const password = String(values.password || "");
-      const role = String(values.role || "");
-      const employee_id = String(values.employee_id || "").trim();
-
-      if (!/^[A-Za-z0-9_]{3,50}$/.test(username)) {
-        notify("Ten dang nhap phai co 3-50 ky tu.", true);
-        return;
-      }
-
-      if (password.length < 12 || password.length > 72) {
-        notify("Mat khau phai co 12-72 ky tu.", true);
-        return;
-      }
-
-      if (!["manager", "phucvu", "thungan", "kho"].includes(role)) {
-        notify("Vui long chon quyen hop le.", true);
-        return;
-      }
-
-      const submitButton = form.querySelector(
-        'button[type="submit"]'
-      );
-
-      if (submitButton) submitButton.disabled = true;
-
-      try {
-        const response = await fetch(`${API_URL}/accounts`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            username,
-            password,
-            role,
-            employee_id: employee_id || null
-          })
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Khong the tao tai khoan."
-          );
-        }
-
-        state.modal = null;
-        render();
-
-        notify("Tao tai khoan thanh cong: " + username);
-
-      } catch (error) {
-        console.error("Loi tao tai khoan:", error);
-        notify(error.message, true);
-
-      } finally {
-        if (submitButton && submitButton.isConnected) {
-          submitButton.disabled = false;
-        }
-      }
-
-      return;
-    }
-
-    // ADMIN THAY DOI QUYEN TAI KHOAN
-    if (form.id === "accountRoleForm") {
-        if (!isAdmin()) {
-            notify("Chi Admin moi duoc doi quyen.", true);
-            return;
-        }
-
-        const accountId = state.modal?.id;
-        const newRole = String(values.role || "");
-
-        const allowedRoles = [
-            "manager",
-            "phucvu",
-            "thungan",
-            "kho"
-        ];
-
-        if (!accountId || !allowedRoles.includes(newRole)) {
-            notify("Thong tin phan quyen khong hop le.", true);
-            return;
-        }
-
-        const token = sessionStorage.getItem(TOKEN_KEY);
-
-        if (!token) {
-            notify("Phien dang nhap da het han.", true);
-            return;
-        }
-
-        const submitButton = form.querySelector(
-            'button[type="submit"]'
-        );
-
-        if (submitButton) {
-            submitButton.disabled = true;
-        }
-
-        try {
-            const response = await fetch(
-                `${API_URL}/accounts/${encodeURIComponent(accountId)}/role`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": `Bearer ${token}`
-                    },
-                    body: JSON.stringify({
-                        role: newRole
-                    })
-                }
-            );
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(
-                    result.error || "Khong the thay doi quyen."
-                );
-            }
-
-            state.modal = null;
-
-            await loadAccountsFromSQL();
-
-            render();
-
-            notify("Cap nhat quyen tai khoan thanh cong!");
-
-        } catch (error) {
-            console.error("Loi thay doi quyen:", error);
-            notify(error.message, true);
-
-        } finally {
-            if (submitButton && submitButton.isConnected) {
-                submitButton.disabled = false;
-            }
-        }
-
-        return;
-    }
-
 
     // -----------------------------------------
     // THEM / SUA MON
@@ -4095,15 +2845,10 @@ case "refresh-accounts":
         );
         return;
       }
-const currentStock = Number(material.stock);
 
-if (!Number.isFinite(currentStock) || currentStock < 0) {
-    notify("Dữ liệu tồn kho không hợp lệ.", true);
-    return;
-}
       if (
         values.operation === "out" &&
-      quantity > currentStock
+        quantity > material.stock
       ) {
         notify(
           "Không thể xuất quá số lượng tồn kho.",
@@ -4113,10 +2858,10 @@ if (!Number.isFinite(currentStock) || currentStock < 0) {
       }
 
       if (values.operation === "in") {
-    material.stock = Number(material.stock) + Number(quantity);
-} else {
-    material.stock = Number(material.stock) - Number(quantity);
-}
+        material.stock += quantity;
+      } else {
+        material.stock -= quantity;
+      }
 
       material.stock =
         Math.round(material.stock * 100) / 100;
@@ -4165,7 +2910,7 @@ if (!Number.isFinite(currentStock) || currentStock < 0) {
       }
 
       db.materials.push({
-       id: createMaterialId(),
+        id: createId("NL"),
         name: values.name.trim(),
         unit: values.unit.trim(),
         stock,
