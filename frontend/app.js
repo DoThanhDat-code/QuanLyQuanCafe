@@ -55,6 +55,18 @@
     Date.now().toString(36).toUpperCase() +
     Math.random().toString(36).slice(2, 6).toUpperCase();
 
+    // Tao ma nguyen lieu tu dong
+function createMaterialId() {
+    const numbers = db.materials
+        .map(item => {
+            const match = /^NL(\d+)$/.exec(item.id);
+            return match ? Number(match[1]) : 0;
+        });
+
+    const next = Math.max(0, ...numbers) + 1;
+
+    return "NL" + String(next).padStart(2, "0");
+}
   // =====================================================
   // 2. DANH MUC VA PHAN QUYEN
   // =====================================================
@@ -501,9 +513,9 @@ authenticatedUser = {
     return authenticatedUser;
   }
 
-  function isManager() {
+function isManager() {
     return currentUser()?.role === "manager";
-  }
+}
 
   
   function hasPermission(page) {
@@ -2070,15 +2082,25 @@ if (mode === "merge") {
         </td>
 
         <td>
-          ${canManageStock()
-            ? `<button
-                 type="button"
-                 class="btn small"
-                 data-stock="${escapeHTML(material.id)}">
-                 Nhập / xuất
-               </button>`
-            : "Chỉ xem"}
-        </td>
+  ${canManageStock()
+    ? `<button
+         type="button"
+         class="btn small"
+         data-stock="${escapeHTML(material.id)}">
+         Nhập / xuất
+       </button>`
+    : "Chỉ xem"}
+
+  ${isManager()
+    ? `<button
+         type="button"
+         class="btn small"
+         data-delete-material="${escapeHTML(material.id)}"
+         style="color: red; margin-left: 8px;">
+         Xóa
+       </button>`
+    : ""}
+</td>
 
       </tr>
     `).join("");
@@ -2993,12 +3015,79 @@ app.addEventListener("click", async event => {
       "[data-edit-table], [data-status-table], [data-delete-table], " +
       "[data-cat], [data-prod], [data-qty], " +
       "[data-edit-product], [data-stock], " +
-      "[data-edit-employee], [data-period]"
+   "[data-edit-employee], [data-period], [data-delete-material]"
     );
 
 
     if (!target) return;
+// ============================================
+// XOA NGUYEN LIEU
+// ============================================
 
+if (target.dataset.deleteMaterial !== undefined) {
+
+    // Chi quan ly moi duoc xoa
+    if (!isManager()) {
+        notify("Bạn không có quyền xóa nguyên liệu.", true);
+        return;
+    }
+
+    const materialId = target.dataset.deleteMaterial;
+
+    // Tim nguyen lieu
+    const material = db.materials.find(
+        item => item.id === materialId
+    );
+
+    if (!material) {
+        notify("Không tìm thấy nguyên liệu.", true);
+        return;
+    }
+
+    // Kiem tra lich su nhap/xuat
+    const hasHistory = db.transactions.some(
+        item => item.materialId === materialId
+    );
+
+    if (hasHistory) {
+        notify(
+            "Nguyên liệu đã có lịch sử nhập/xuất, không thể xóa.",
+            true
+        );
+        return;
+    }
+
+    // Xac nhan truoc khi xoa
+    const confirmed = window.confirm(
+        "Bạn có chắc chắn muốn xóa nguyên liệu: " +
+        material.name +
+        "?\n\nThao tác này không thể hoàn tác."
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    // Xoa nguyen lieu khoi danh sach
+    db.materials = db.materials.filter(
+        item => item.id !== materialId
+    );
+
+    // Luu du lieu
+    saveDatabase();
+
+    // Cap nhat giao dien
+    render();
+
+    notify("Đã xóa nguyên liệu " + material.name);
+
+    return;
+}
+    // CHUYEN TRANG
+    if (target.dataset.page) {
+      changePage(target.dataset.page);
+      return;
+    }
     // XOA MEM BAN TRONG SQL SERVER
     if (target.dataset.deleteTable) {
       if (!checkManager()) return;
@@ -4006,10 +4095,15 @@ case "refresh-accounts":
         );
         return;
       }
+const currentStock = Number(material.stock);
 
+if (!Number.isFinite(currentStock) || currentStock < 0) {
+    notify("Dữ liệu tồn kho không hợp lệ.", true);
+    return;
+}
       if (
         values.operation === "out" &&
-        quantity > material.stock
+      quantity > currentStock
       ) {
         notify(
           "Không thể xuất quá số lượng tồn kho.",
@@ -4019,10 +4113,10 @@ case "refresh-accounts":
       }
 
       if (values.operation === "in") {
-        material.stock += quantity;
-      } else {
-        material.stock -= quantity;
-      }
+    material.stock = Number(material.stock) + Number(quantity);
+} else {
+    material.stock = Number(material.stock) - Number(quantity);
+}
 
       material.stock =
         Math.round(material.stock * 100) / 100;
@@ -4071,7 +4165,7 @@ case "refresh-accounts":
       }
 
       db.materials.push({
-        id: createId("NL"),
+       id: createMaterialId(),
         name: values.name.trim(),
         unit: values.unit.trim(),
         stock,
