@@ -2,49 +2,12 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const { sql, connectDB } = require("../config/db");
 const requireAdmin = require("../middleware/requireAdmin");
+const { validateEmployee } = require("../utils/employeeValidation");
 const router = express.Router();
 router.use(requireAdmin);
 
-const roles = new Set(["manager", "phucvu", "thungan", "kho"]);
 const fields = `e.employee_id, e.full_name, e.phone, e.email, e.position, e.hire_date,
     e.is_active, u.user_id, u.username, u.role, u.is_active AS account_active`;
-
-function validate(body, creating) {
-  const fullName = String(body.full_name || "").trim();
-  const position = String(body.position || "").trim();
-  const phone = String(body.phone || "").trim();
-  const email = String(body.email || "").trim();
-  const username = String(body.username || "").trim();
-  const password = body.password == null ? "" : body.password;
-  const role = body.role || "";
-  if (
-    !fullName ||
-    fullName.length > 100 ||
-    !position ||
-    position.length > 50 ||
-    (phone && !/^\+?[0-9]{9,15}$/.test(phone)) ||
-    (email &&
-      (email.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) ||
-    (username &&
-      (username.length > 50 || !/^[A-Za-z0-9_.-]+$/.test(username))) ||
-    (username && !roles.has(role)) ||
-    (!username && (password || role)) ||
-    (password && (typeof password !== "string" || password.length < 12)) ||
-    (creating && username && !password)
-  )
-    return null;
-  return {
-    fullName,
-    position,
-    phone: phone || null,
-    email: email || null,
-    username,
-    password,
-    role,
-    active: body.is_active !== false,
-    accountActive: body.account_active !== false && body.is_active !== false,
-  };
-}
 
 function bind(request, data) {
   return request
@@ -78,12 +41,13 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const data = validate(req.body || {}, true);
+  const data = validateEmployee(req.body || {}, true);
   if (!data)
     return res.status(400).json({ error: "Thong tin nhan vien khong hop le" });
   let tx;
   try {
     const pool = await connectDB();
+    // Nhân viên và tài khoản phải cùng được lưu thành công hoặc cùng hoàn tác.
     tx = new sql.Transaction(pool);
     await tx.begin();
     const id =
@@ -112,12 +76,13 @@ router.post("/", async (req, res) => {
 });
 
 router.put("/:id", async (req, res) => {
-  const data = validate(req.body || {}, false);
+  const data = validateEmployee(req.body || {}, false);
   if (!data)
     return res.status(400).json({ error: "Thong tin nhan vien khong hop le" });
   let tx;
   try {
     const pool = await connectDB();
+    // Transaction tránh trường hợp thông tin nhân viên đổi nhưng tài khoản chưa đổi.
     tx = new sql.Transaction(pool);
     await tx.begin();
     const existing = await new sql.Request(tx)
