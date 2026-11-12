@@ -1334,7 +1334,7 @@
               ${button("💾 Lưu đơn", "save-order")}
 
               ${button(
-                "💳 Thanh toán",
+                "Tạm tính",
                 "open-pay",
                 "primary"
               )}
@@ -1733,120 +1733,50 @@ async function loadPaymentOrders() {
   }
 }
 
+let paymentPreview = null;
+let paymentBusy = false;
+async function paymentAPI(path, body) {
+  const response = await fetch("http://localhost:3000/api/payments"+path, {headers:{Authorization:`Bearer ${sessionStorage.getItem("moc_coffee_auth_token_v1")}`,"Content-Type":"application/json"}, ...(body ? {method:"POST",body:JSON.stringify(body)} : {})});
+  const data=await response.json(); if(!response.ok) throw new Error(data.message || "Lỗi thanh toán"); return data;
+}
+function paymentItems(data) {
+  return `<p>Đơn: ${escapeHTML(data.order_id)} · Bàn: ${escapeHTML(data.table_name)}</p><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${data.items.map(x=>`<tr><td>${escapeHTML(x.product_name)}</td><td>${Number(x.quantity)}</td><td>${money(Number(x.unit_price))}</td><td>${money(Number(x.amount))}</td></tr>`).join("")}</tbody></table><h3>Tổng: ${money(Number(data.subtotal))}</h3>`;
+}
+async function openPaymentPreview(id) {
+  try {
+    paymentPreview=await paymentAPI("/preview/"+encodeURIComponent(id));
+    const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px";
+    dialog.innerHTML=`<h2>Tạm tính đơn hàng</h2>${paymentItems(paymentPreview)}<button class="btn" data-back>Quay lại</button> <button class="btn primary" data-next>Xác nhận</button>`;
+    document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove());
+    dialog.querySelector("[data-back]").onclick=()=>dialog.close();
+    dialog.querySelector("[data-next]").onclick=()=>{dialog.close(); if(!canPay()){paymentPreview=null;notify("Đã tạm tính. Thu ngân cần mở đơn ở trang Thanh toán.");return;} paymentFormOpen=true;state.page="payments";render();}; dialog.showModal();
+  }catch(e){notify(e.message,true);}
+}
+// Orders integration contract: call after SQL order has been saved.
+window.openPaymentPreview = openPaymentPreview;
 function paymentOrderFormHTML() {
   if (!paymentFormOpen) return "";
-
-  const options = paymentOrders.map(order => {
-    const id = order.order_id;
-    const total = Number(order.subtotal || order.total_amount || 0);
-
-    return `
-      <option value="${escapeHTML(id)}">
-        ${escapeHTML(id)} - ${money(total)}
-      </option>
-    `;
-  }).join("");
-
-  return `
-    <div class="card" style="margin-bottom:24px">
-      <h2>Thanh toán đơn hàng</h2>
-
-      ${paymentOrdersError
-        ? `<p style="color:red">${escapeHTML(paymentOrdersError)}</p>`
-        : ""}
-
-      <form id="sql-payment-form">
-        <label>Chọn đơn hàng chưa thanh toán</label>
-
-        <select name="order_id" required
-          style="width:100%;padding:12px;margin:10px 0 20px">
-          <option value="">-- Chọn đơn hàng --</option>
-          ${options}
-        </select>
-
-        <label>Phương thức thanh toán</label>
-
-        <select name="payment_method" required
-          style="width:100%;padding:12px;margin:10px 0 20px">
-          <option value="cash">Tiền mặt</option>
-          <option value="transfer">Chuyển khoản</option>
-          <option value="card">Thẻ</option>
-        </select>
-
-        <label>Giảm giá (VNĐ)</label>
-
-        <input
-          type="number"
-          name="discount"
-          value="0"
-          min="0"
-          step="1"
-          required
-          style="width:100%;padding:12px;margin:10px 0 20px"
-        >
-
-        <div style="display:flex;gap:12px;flex-wrap:wrap">
-          <button type="submit" class="btn primary">
-            Xác nhận thanh toán
-          </button>
-
-          <button type="button" class="btn"
-            id="close-payment-form">
-            Hủy
-          </button>
-        </div>
-      </form>
-
-      ${paymentOrdersLoading ? "<p>Đang tải đơn hàng...</p>" : ""}
-      ${!paymentOrdersLoading && !paymentOrdersError && !paymentOrders.length
-        ? "<p>Chưa có đơn hàng chờ thanh toán.</p>"
-        : ""}
-    </div>
-  `;
+  const d=paymentPreview;
+  return `<div class="card" style="margin-bottom:24px"><h2>Thanh toán đơn hàng</h2>
+  ${paymentOrdersError?`<p>${escapeHTML(paymentOrdersError)}</p>`:""}
+  <div class="actions">${paymentOrders.map(o=>`<button class="btn" data-payment-preview="${escapeHTML(o.order_id)}">${escapeHTML(o.table_name)} · ${money(Number(o.subtotal))}</button>`).join("")}</div>
+  ${paymentOrdersLoading?"Đang tải...":(!paymentOrders.length&&!d?"Chưa có bàn chờ thanh toán.":"")}
+  ${d?`${paymentItems(d)}<form id="sql-payment-form"><input type="hidden" name="order_id" value="${escapeHTML(d.order_id)}"><label>Phương thức <select name="payment_method"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option></select></label><div id="payment-cash"><label>Tiền khách đưa <input name="cash_received" type="number" min="${Number(d.subtotal)}" max="999999999999" step="1" required></label><p>Tiền trả lại: <strong id="payment-change">0 đ</strong></p></div><div id="payment-transfer" hidden><label><input type="checkbox" name="transfer_confirmed"> Đã nhận đủ tiền chuyển khoản</label><label>Mã giao dịch (nếu có) <input name="transaction_reference" maxlength="100"></label></div><button class="btn primary" type="submit" ${paymentBusy?"disabled":""}>Xác nhận thanh toán</button></form>`:""}
+  <button class="btn" id="close-payment-form">Quay lại</button></div>`;
 }
-
+app.addEventListener("input",e=>{
+  const f=e.target.closest("#sql-payment-form"); if(!f||!paymentPreview)return;
+  const cash=f.elements.payment_method.value==="cash"; f.querySelector("#payment-cash").hidden=!cash; f.querySelector("#payment-transfer").hidden=cash; f.elements.cash_received.required=cash; f.elements.transfer_confirmed.required=!cash;
+  f.querySelector("#payment-change").textContent=money(Math.max(0,Number(f.elements.cash_received.value)-Number(paymentPreview.subtotal)));
+});
+async function showSQLInvoice(id) {
+  try {const d=await paymentAPI("/"+encodeURIComponent(id)+"/invoice"); const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px"; dialog.innerHTML=`<section><h2>MỘC Coffee – Hóa đơn ${escapeHTML(d.invoice_id)}</h2><p>${escapeHTML(new Date(d.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(d.employee_name||d.username||d.employee_id||"Không rõ")}</p>${paymentItems(d)}<p>Giảm giá: ${money(Number(d.discount))}</p><h3>Đã thanh toán: ${money(Number(d.total_amount))}</h3><p>Phương thức: ${escapeHTML(d.payment_method)}</p>${d.cash_received!=null?`<p>Khách đưa: ${money(Number(d.cash_received))} · Trả lại: ${money(Number(d.cash_received)-Number(d.total_amount))}</p>`:""}</section><button class="btn" data-print>In hóa đơn</button> <button class="btn" data-close>Đóng</button>`; document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove()); dialog.querySelector("[data-close]").onclick=()=>dialog.close(); dialog.querySelector("[data-print]").onclick=()=>{const w=window.open("","_blank");if(!w){notify("Hãy cho phép cửa sổ in",true);return;}w.document.write('<html><head><title>Hóa đơn</title><style>body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}</style></head><body>'+dialog.querySelector("section").innerHTML+'</body></html>');w.document.close();w.focus();w.print();};dialog.showModal();}catch(e){notify(e.message,true);}
+}
 async function submitSQLPayment(form) {
-  const token = sessionStorage.getItem("moc_coffee_auth_token_v1");
-  const values = Object.fromEntries(new FormData(form));
-
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-
-  try {
-    const response = await fetch(
-      "http://localhost:3000/api/payments",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          order_id: values.order_id,
-          payment_method: values.payment_method,
-          discount: Number(values.discount)
-        })
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || "Thanh toán thất bại.");
-    }
-
-    alert("Thanh toán thành công! Hóa đơn đã lưu vào SQL Server.");
-
-    paymentFormOpen = false;
-    paymentsLoaded = false;
-
-    await loadPaymentsFromSQL();
-    await loadPaymentOrders();
-  } catch (error) {
-    alert("Lỗi thanh toán: " + error.message);
-  } finally {
-    button.disabled = false;
-  }
+  if(paymentBusy||!canPay()||!paymentPreview)return;
+  const v=Object.fromEntries(new FormData(form)); paymentBusy=true;const button=form.querySelector('[type="submit"]');button.disabled=true;
+  try {const data=await paymentAPI("",{order_id:v.order_id,payment_method:v.payment_method,discount:0,expected_total:Number(paymentPreview.subtotal),cash_received:v.cash_received===""?null:Number(v.cash_received),transfer_confirmed:v.transfer_confirmed==="on",transaction_reference:v.transaction_reference}); paymentPreview=null;paymentFormOpen=false;paymentsLoaded=false;await loadPaymentsFromSQL();await loadTablesFromSQL();await loadPaymentOrders();notify("Thanh toán thành công");await showSQLInvoice(data.invoice_id);}
+  catch(e){notify(e.message,true);}finally{paymentBusy=false;button.disabled=false;}
 }
 function paymentsPage() {
   const invoices = [...sqlInvoices].sort(
@@ -1868,9 +1798,14 @@ function paymentsPage() {
 
   const rows = invoices.map(invoice => `
     <tr>
-      <td>${escapeHTML(invoice.invoice_id)}</td>
+      <td><button class="btn small" data-payment-invoice="${escapeHTML(invoice.invoice_id)}">${escapeHTML(invoice.invoice_id)}</button></td>
       <td>${escapeHTML(invoice.order_id)}</td>
-      <td>${escapeHTML(invoice.payment_method)}</td>
+      <td>${escapeHTML(
+  invoice.payment_method === "cash" ? "Tiền mặt" :
+  invoice.payment_method === "transfer" ? "Chuyển khoản" :
+  invoice.payment_method === "card" ? "Thẻ ngân hàng" :
+  invoice.payment_method
+)}</td>
       <td>${money(Number(invoice.total_amount))}</td>
       <td>${escapeHTML(
         new Date(invoice.paid_at).toLocaleString("vi-VN")
@@ -2661,7 +2596,7 @@ ${paymentOrderFormHTML()}
   app.innerHTML = mainLayout();
 
   // Tự động lấy hóa đơn từ SQL Server khi mở trang Thanh toán
-  if (state.page === "payments" && !paymentsLoaded && !paymentsLoading) {
+  if (state.page === "payments" && !paymentsLoaded && !paymentsLoading && !paymentsError) {
     loadPaymentsFromSQL().then(() => {
       if (state.page === "payments") {
         render();
@@ -2674,7 +2609,10 @@ ${paymentOrderFormHTML()}
   // 21. XU LY SU KIEN CLICK
   // =====================================================
 
-  app.addEventListener("click", event => {
+  app.addEventListener("click", async event => {
+ const previewButton=event.target.closest("[data-payment-preview]"); if(previewButton){openPaymentPreview(previewButton.dataset.paymentPreview);return;}
+ const invoiceButton=event.target.closest("[data-payment-invoice]"); if(invoiceButton){showSQLInvoice(invoiceButton.dataset.paymentInvoice);return;}
+ if(event.target.closest("#reload-sql-payments")){paymentsLoaded=false;loadPaymentsFromSQL().then(render);return;}
  if (event.target.closest("#open-payment-form")) {
   paymentFormOpen = true;
   render();
@@ -2684,6 +2622,7 @@ ${paymentOrderFormHTML()}
 
 if (event.target.closest("#close-payment-form")) {
   paymentFormOpen = false;
+  paymentPreview = null;
   render();
   return;
 }
@@ -2833,6 +2772,7 @@ if (event.target.closest("#close-payment-form")) {
     switch (target.dataset.action) {
 
       case "logout":
+        sqlInvoices=[]; paymentsLoaded=false; paymentsError=""; paymentPreview=null; paymentOrders=[]; paymentFormOpen=false;
         clearSession();
 
         state.page = "dashboard";
@@ -2872,25 +2812,10 @@ if (event.target.closest("#close-payment-form")) {
         }
         break;
 
-      case "open-pay":
-        if (!canPay()) {
-          notify(
-            "Chỉ thu ngân hoặc quản lý được thanh toán.",
-            true
-          );
-          return;
-        }
-
-        if (!state.cart.length) {
-          notify(
-            "Đơn hàng chưa có món.",
-            true
-          );
-          return;
-        }
-
-        openModal("pay");
-        break;
+      case "open-pay": {
+        // Only use an existing SQL order; do not create a local payment.
+        try {const orders=await paymentAPI("/orders");const matches=orders.filter(o=>o.table_id===state.tableId);if(matches.length!==1){notify("Cần lưu đơn vào SQL Server trước khi tạm tính; kiểm tra tích hợp Orders.",true);break;}await openPaymentPreview(matches[0].order_id);}catch(e){notify(e.message,true);}break;
+      }
 
       case "transfer-table":
         performTableAction("transfer");
@@ -3093,10 +3018,7 @@ if (event.target.closest("#close-payment-form")) {
     // -----------------------------------------
 
     if (form.id === "payForm") {
-      checkout(
-        values.method,
-        Number(values.discount)
-      );
+      notify("Hãy sử dụng Tạm tính và thanh toán qua SQL Server.", true);
       return;
     }
 
