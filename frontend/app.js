@@ -362,8 +362,9 @@ authenticatedUser = {
       // hoac { user: {...} }.
       const user = result.user || result;
 
-      setAuthenticatedUser(user);
-      render();
+setAuthenticatedUser(user);
+render();
+await loadMaterialsFromSQL();
 
     } catch (error) {
       console.warn(
@@ -414,8 +415,9 @@ authenticatedUser = {
     state.page = "dashboard";
     state.modal = null;
 
-    render();
-    notify("Đăng nhập thành công!");
+render();
+await loadMaterialsFromSQL();
+notify("Đăng nhập thành công!");
   }
 
   // =====================================================
@@ -504,6 +506,61 @@ authenticatedUser = {
       console.warn("Tam su dung danh sach ban demo.");
     }
   }
+
+  // Tai danh sach nguyen lieu tu SQL Server
+  async function loadMaterialsFromSQL() {
+    try {
+      const token = sessionStorage.getItem(TOKEN_KEY);
+
+      if (!token) {
+        throw new Error("Vui long dang nhap de xem kho.");
+      }
+
+      const response = await fetch(
+        `${API_URL}/inventory/ingredients`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Khong the tai nguyen lieu."
+        );
+      }
+
+      if (!Array.isArray(result.ingredients)) {
+        throw new Error("Du lieu nguyen lieu khong hop le.");
+      }
+
+      db.materials = result.ingredients.map(item => ({
+        id: item.material_id,
+        name: item.material_name,
+        unit: item.unit,
+        stock: Number(item.quantity),
+        minimum: Number(item.min_quantity),
+        active: Boolean(item.is_active)
+      }));
+
+      if (currentUser()) {
+        render();
+      }
+
+      console.log(
+        "Da tai nguyen lieu tu SQL Server:",
+        db.materials.length
+      );
+
+    } catch (error) {
+      console.error("Loi tai nguyen lieu:", error);
+      notify(error.message, true);
+    }
+  }
+
 
   // =====================================================
   // 7. HAM DUNG CHUNG
@@ -605,13 +662,22 @@ function isManager() {
     }
 
     
+
 state.page = page;
 render();
 
-// Tu dong tai danh sach khi Admin mo trang
+// Khi mo trang Kho nguyen lieu
+// Tu dong tai du lieu moi nhat tu SQL Server
+if (page === "inventory") {
+  loadMaterialsFromSQL();
+  loadInventoryHistoryFromSQL();
+}
+
+// Khi Admin mo trang Quan ly tai khoan
 if (page === "accounts" && isAdmin()) {
     loadAccountsFromSQL();
 }
+
 
   }
 
@@ -2044,111 +2110,250 @@ if (mode === "merge") {
   // 16. QUAN LY KHO NGUYEN LIEU
   // =====================================================
 
-  function inventoryPage() {
-    const low = db.materials.filter(
-      material => material.stock < material.minimum
+  // ==========================================
+// LICH SU NHAP / XUAT KHO TU SQL SERVER
+// ==========================================
+
+let inventoryHistory = [];
+let inventoryHistoryLoading = false;
+let inventoryHistoryError = "";
+
+async function loadInventoryHistoryFromSQL() {
+  if (inventoryHistoryLoading) return;
+
+  const token = sessionStorage.getItem(
+    "moc_coffee_auth_token_v1"
+  );
+
+  if (!token) {
+    inventoryHistoryError = "Bạn chưa đăng nhập.";
+    return;
+  }
+
+  inventoryHistoryLoading = true;
+  inventoryHistoryError = "";
+
+  try {
+    const response = await fetch(
+      "http://localhost:3000/api/inventory/history",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
     );
 
-    const rows = db.materials.map(material => `
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error || "Không thể tải lịch sử kho"
+      );
+    }
+
+    inventoryHistory = Array.isArray(data.history)
+      ? data.history
+      : [];
+
+  } catch (error) {
+    console.error("Lỗi tải lịch sử kho:", error);
+    inventoryHistoryError = error.message;
+  } finally {
+    inventoryHistoryLoading = false;
+
+    // Chỉ cập nhật giao diện khi đang ở trang kho
+    if (state.page === "inventory") {
+      render();
+    }
+  }
+}
+function inventoryPage() {
+  const low = db.materials.filter(
+    material => material.stock < material.minimum
+  );
+
+  const rows = db.materials.map(material => `
+    <tr>
+      <td>
+        <b>${escapeHTML(material.name)}</b>
+        <div class="muted">
+          ${escapeHTML(material.id)}
+        </div>
+      </td>
+
+      <td>
+        ${material.stock}
+        ${escapeHTML(material.unit)}
+      </td>
+
+      <td>
+        ${material.minimum}
+        ${escapeHTML(material.unit)}
+      </td>
+
+      <td>
+        ${pill(
+          material.stock < material.minimum
+            ? "Sắp hết"
+            : "Đủ hàng",
+          material.stock < material.minimum
+            ? "red"
+            : "green"
+        )}
+      </td>
+
+      <td>
+        ${canManageStock()
+          ? `<button
+               type="button"
+               class="btn small"
+               data-stock="${escapeHTML(material.id)}">
+               Nhập / xuất
+             </button>`
+          : "Chỉ xem"}
+
+        ${isManager()
+          ? `<button
+               type="button"
+               class="btn small"
+               data-delete-material="${escapeHTML(material.id)}"
+               style="color: red; margin-left: 8px;">
+               Xóa
+             </button>`
+          : ""}
+      </td>
+    </tr>
+  `).join("");
+
+  // Tạo các dòng lịch sử nhập/xuất
+  const historyRows = inventoryHistory.map(item => {
+    const isIn = item.transaction_type === "IN";
+
+    const date = item.transaction_date
+      ? new Date(item.transaction_date).toLocaleString("vi-VN")
+      : "";
+
+    return `
       <tr>
+        <td>${escapeHTML(String(item.transaction_id))}</td>
 
         <td>
-          <b>${escapeHTML(material.name)}</b>
+          <b>${escapeHTML(item.material_name || "")}</b>
           <div class="muted">
-            ${escapeHTML(material.id)}
+            ${escapeHTML(item.material_id || "")}
           </div>
         </td>
 
         <td>
-          ${material.stock}
-          ${escapeHTML(material.unit)}
-        </td>
-
-        <td>
-          ${material.minimum}
-          ${escapeHTML(material.unit)}
-        </td>
-
-        <td>
           ${pill(
-            material.stock < material.minimum
-              ? "Sắp hết"
-              : "Đủ hàng",
-
-            material.stock < material.minimum
-              ? "red"
-              : "green"
+            isIn ? "Nhập kho" : "Xuất kho",
+            isIn ? "green" : "red"
           )}
         </td>
 
         <td>
-  ${canManageStock()
-    ? `<button
-         type="button"
-         class="btn small"
-         data-stock="${escapeHTML(material.id)}">
-         Nhập / xuất
-       </button>`
-    : "Chỉ xem"}
+          ${Number(item.quantity)}
+          ${escapeHTML(item.unit || "")}
+        </td>
 
-  ${isManager()
-    ? `<button
-         type="button"
-         class="btn small"
-         data-delete-material="${escapeHTML(material.id)}"
-         style="color: red; margin-left: 8px;">
-         Xóa
-       </button>`
-    : ""}
-</td>
+        <td>${escapeHTML(date)}</td>
 
+        <td>
+        ${escapeHTML(item.performed_by || "—")}
+        </td>
+
+        <td>
+          ${escapeHTML(item.note || "—")}
+        </td>
       </tr>
-    `).join("");
+    `;
+  }).join("");
 
-    return heading(
-      "Quản lý kho",
-      "Theo dõi số lượng nguyên liệu nhập, xuất và tồn",
-      isManager()
-        ? button(
-            "➕ Thêm nguyên liệu",
-            "add-material",
-            "primary"
-          )
-        : ""
-    ) + `
+  return heading(
+    "Quản lý kho",
+    "Theo dõi số lượng nguyên liệu nhập, xuất và tồn",
+    isManager()
+      ? button(
+          "➕ Thêm nguyên liệu",
+          "add-material",
+          "primary"
+        )
+      : ""
+  ) + `
 
-      ${low.length
-        ? `<div class="notice">
-             ⚠ Có ${low.length} nguyên liệu sắp hết:
-             ${low.map(item =>
-               escapeHTML(item.name)
-             ).join(", ")}
-           </div>`
+    ${low.length
+      ? `<div class="notice">
+           ⚠ Có ${low.length} nguyên liệu sắp hết:
+           ${low.map(item =>
+             escapeHTML(item.name)
+           ).join(", ")}
+         </div>`
+      : ""}
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nguyên liệu</th>
+              <th>Tồn hiện tại</th>
+              <th>Tồn tối thiểu</th>
+              <th>Trạng thái</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- LICH SU NHAP / XUAT KHO -->
+    <div class="card" style="margin-top: 24px;">
+
+      <h3>Lịch sử nhập / xuất kho</h3>
+
+      ${inventoryHistoryLoading
+        ? `<p>Đang tải lịch sử từ SQL Server...</p>`
         : ""}
 
-      <div class="card">
+      ${inventoryHistoryError
+        ? `<p style="color:red;">
+             ${escapeHTML(inventoryHistoryError)}
+           </p>`
+        : ""}
 
-        <div class="table-wrap">
-          <table>
+      ${!inventoryHistoryLoading &&
+        !inventoryHistoryError &&
+        inventoryHistory.length === 0
+          ? `<p>Chưa có giao dịch nhập/xuất kho.</p>`
+          : ""}
 
-            <thead>
-              <tr>
-                <th>Nguyên liệu</th>
-                <th>Tồn hiện tại</th>
-                <th>Tồn tối thiểu</th>
-                <th>Trạng thái</th>
-                <th>Thao tác</th>
-              </tr>
-            </thead>
+      ${inventoryHistory.length
+        ? `
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mã GD</th>
+                  <th>Nguyên liệu</th>
+                  <th>Loại</th>
+                  <th>Số lượng</th>
+                  <th>Thời gian</th>
+               <th>Người thực hiện</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
 
-            <tbody>${rows}</tbody>
+              <tbody>${historyRows}</tbody>
+            </table>
+          </div>
+        `
+        : ""}
+    </div>
+  `;
+}
 
-          </table>
-        </div>
-
-      </div>
-    `;
-  }
 
   // =====================================================
   // 17. QUAN LY NHAN VIEN
@@ -4069,75 +4274,132 @@ case "refresh-accounts":
     // NHAP / XUAT KHO
     // -----------------------------------------
 
-    if (form.id === "stockForm") {
-      if (!canManageStock()) {
-        notify(
-          "Không có quyền quản lý kho.",
-          true
-        );
+
+if (form.id === "stockForm") {
+    // 1. Kiem tra quyen quan ly kho
+    if (!canManageStock()) {
+        notify("Không có quyền quản lý kho.", true);
         return;
-      }
+    }
 
-      const material = db.materials.find(
+    // 2. Lay nguyen lieu dang duoc chon
+    const material = db.materials.find(
         item => item.id === state.modal?.id
-      );
+    );
 
-      const quantity = Number(values.quantity);
+    const quantity = Number(values.quantity);
+    const operation = values.operation;
 
-      if (
+    // 3. Kiem tra du lieu nhap
+    if (
         !material ||
         !Number.isFinite(quantity) ||
         quantity <= 0
-      ) {
+    ) {
+        notify("Số lượng không hợp lệ.", true);
+        return;
+    }
+
+    if (operation !== "in" && operation !== "out") {
+        notify("Loại giao dịch không hợp lệ.", true);
+        return;
+    }
+
+    // 4. Kiem tra so luong ton kho hien tai
+    const currentStock = Number(material.stock);
+
+    if (
+        !Number.isFinite(currentStock) ||
+        currentStock < 0
+    ) {
+        notify("Dữ liệu tồn kho không hợp lệ.", true);
+        return;
+    }
+
+    if (
+        operation === "out" &&
+        quantity > currentStock
+    ) {
         notify(
-          "Số lượng không hợp lệ.",
-          true
+            "Không thể xuất quá số lượng tồn kho.",
+            true
         );
         return;
-      }
-const currentStock = Number(material.stock);
+    }
 
-if (!Number.isFinite(currentStock) || currentStock < 0) {
-    notify("Dữ liệu tồn kho không hợp lệ.", true);
+    // 5. Lay token dang nhap
+    const token = sessionStorage.getItem(
+        "moc_coffee_auth_token_v1"
+    );
+
+    if (!token) {
+        notify(
+            "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+            true
+        );
+        return;
+    }
+
+    // 6. Gui giao dich nhap/xuat den Backend
+    try {
+        const response = await fetch(
+            "http://localhost:3000/api/inventory/transactions",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    material_id: material.id,
+                    transaction_type: operation.toUpperCase(),
+                    quantity: quantity,
+                    note: "Nhap/xuat kho tu giao dien MOC Coffee"
+                })
+            }
+        );
+
+        // 7. Doc ket qua tu Backend
+        const result = await response.json();
+
+        if (!response.ok) {
+            notify(
+                result.error ||
+                "Không thể cập nhật kho.",
+                true
+            );
+            return;
+        }
+        // 8. Dong bieu mau sau khi SQL thanh cong
+        state.modal = null;
+
+        // 9. Tai lai ton kho moi tu SQL Server
+        await loadMaterialsFromSQL();
+
+        // 10. Tai lai lich su nhap/xuat kho
+        await loadInventoryHistoryFromSQL();
+
+        // 11. Cap nhat giao dien
+        render();
+
+        notify("Cập nhật kho thành công.");
+
+
+    } catch (error) {
+        console.error(
+            "Lỗi nhập/xuất kho:",
+            error
+        );
+
+        notify(
+            "Có lỗi khi gửi hoặc đồng bộ giao dịch. Hãy kiểm tra SQL trước khi thử lại.",
+            true
+        );
+    }
+
     return;
 }
-      if (
-        values.operation === "out" &&
-      quantity > currentStock
-      ) {
-        notify(
-          "Không thể xuất quá số lượng tồn kho.",
-          true
-        );
-        return;
-      }
 
-      if (values.operation === "in") {
-    material.stock = Number(material.stock) + Number(quantity);
-} else {
-    material.stock = Number(material.stock) - Number(quantity);
-}
-
-      material.stock =
-        Math.round(material.stock * 100) / 100;
-
-      db.transactions.push({
-        id: createId("KHO"),
-        materialId: material.id,
-        operation: values.operation,
-        quantity,
-        date: now(),
-        userId
-      });
-
-      saveDatabase();
-
-      state.modal = null;
-      render();
-
-      notify("Cập nhật kho thành công.");
-      return;
-    }
 
     // -----------------------------------------
     // THEM NGUYEN LIEU
@@ -4164,21 +4426,59 @@ if (!Number.isFinite(currentStock) || currentStock < 0) {
         return;
       }
 
-      db.materials.push({
-       id: createMaterialId(),
-        name: values.name.trim(),
-        unit: values.unit.trim(),
-        stock,
-        minimum
-      });
 
-      saveDatabase();
+const token = sessionStorage.getItem(
+    "moc_coffee_auth_token_v1"
+);
 
-      state.modal = null;
-      render();
+if (!token) {
+    notify("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", true);
+    return;
+}
 
-      notify("Đã thêm nguyên liệu.");
-      return;
+try {
+    const response = await fetch(
+        "http://localhost:3000/api/inventory/ingredients",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                material_name: values.name.trim(),
+                unit: values.unit.trim(),
+                quantity: stock,
+                min_quantity: minimum
+            })
+        }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        notify(
+            result.error ||
+            "Không thể thêm nguyên liệu.",
+            true
+        );
+        return;
+    }
+
+    state.modal = null;
+
+    await loadMaterialsFromSQL();
+
+    render();
+
+    notify("Đã thêm nguyên liệu vào SQL Server.");
+} catch (error) {
+    console.error("Lỗi thêm nguyên liệu:", error);
+    notify("Không thể kết nối Backend.", true);
+}
+
+return;
+
     }
 
     // -----------------------------------------

@@ -11,13 +11,12 @@ const authRoutes = require("./routes/authRoutes");
 const recipeRoutes = require("./routes/recipeRoutes");
 const app = express();
 const orderRoutes = require("./routes/orderRoutes");
-
+const inventoryRoutes = require("./routes/inventoryRoutes");
 
 app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/accounts", accountRoutes);
-
 app.get("/", (req, res) => {
     res.json({
         message: "MOC Coffee Backend dang hoat dong"
@@ -28,6 +27,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/tables", tableRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/inventory", inventoryRoutes);
 
 const PORT = process.env.PORT || 3000;
 
