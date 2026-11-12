@@ -18,7 +18,6 @@ async function connectDB() {
         const pool = await sql.connect(config);
 
         console.log("Ket noi SQL Server thanh cong!");
-
         return pool;
     } catch (error) {
         console.error("Loi ket noi:", error.message);

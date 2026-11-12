@@ -1007,26 +1007,12 @@ const available = db.tables.filter(
             : ""}
 
           <div class="actions">
-            <button
-              type="button"
-              class="btn"
-              data-edit-table="${escapeHTML(table.id)}">
-              ✏️ Sửa bàn
-            </button>
+            ${isManager() ? `
+              <button type="button" class="btn" data-edit-table="${escapeHTML(table.id)}">✏️ Sửa bàn</button>
+              <button type="button" class="btn" data-delete-table="${escapeHTML(table.id)}">🗑️ Xóa bàn</button>
+              <button type="button" class="btn" data-status-table="${escapeHTML(table.id)}">🔄 Đổi trạng thái</button>
+            ` : ""}
 
-<button
-  type="button"
-  class="btn"
-  data-status-table="${escapeHTML(table.id)}">
-  🔄 Đổi trạng thái
-</button>
-
-<button
-  type="button"
-  class="btn"
-  data-delete-table="${escapeHTML(table.id)}">
-  🗑️ Xóa bàn
-</button>
 
             
 
@@ -1048,12 +1034,12 @@ const available = db.tables.filter(
       "Quản lý bàn",
 `${available} bàn trống · ${busy} bàn đang phục vụ`,
       `
-        <button
+        ${isManager() ? `<button
           type="button"
           class="btn primary"
           data-action="add-table">
           + Thêm bàn
-        </button>
+        </button>` : ""}
 
         ${canManageOrders()
           ? button("🛒 Tạo đơn mới", "new-order", "primary")
@@ -1160,7 +1146,8 @@ async function updateTableStatus(tableId, status) {
     {
       method: "PATCH",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
       },
       body: JSON.stringify({ status })
     }
@@ -1205,6 +1192,7 @@ async function performTableAction(mode) {
     }
 
 
+
 if (mode === "transfer") {
   if (destination) {
     notify(
@@ -1224,17 +1212,33 @@ if (mode === "transfer") {
   }
 
   try {
-    // Cập nhật trạng thái trong SQL Server
-    await updateTableStatus(destinationId, "occupied");
+    const response = await fetch(
+      `${API_URL}/tables/transfer-order`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+        },
+        body: JSON.stringify({
+          orderId: source.id,
+          sourceId: sourceId,
+          destinationId: destinationId
+        })
+      }
+    );
 
-    // Chuyển đơn hàng sang bàn đích
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || "Không thể chuyển bàn."
+      );
+    }
+
+    // Chỉ thay đổi dữ liệu giao diện sau khi SQL thành công
     source.tableId = destinationId;
     source.updatedAt = now();
-
-    // Giải phóng bàn nguồn nếu không còn đơn
-    if (!getOpenOrder(sourceId)) {
-      await updateTableStatus(sourceId, "available");
-    }
 
     if (state.tableId === sourceId) {
       state.tableId = destinationId;
@@ -1251,76 +1255,95 @@ if (mode === "transfer") {
 
   } catch (error) {
     console.error("Lỗi chuyển bàn:", error);
+
     notify(
-      error.message || "Không thể cập nhật trạng thái bàn.",
+      error.message || "Không thể chuyển bàn.",
       true
     );
   }
 
   return;
 }
+
 if (mode === "merge") {
-      if (!destination) {
-        notify(
-          "Bàn đích chưa có đơn hàng để gộp.",
-          true
-        );
-        return;
+if (mode === "merge") {
+  if (!destination) {
+    notify("Bàn đích chưa có đơn hàng để gộp.", true);
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_URL}/tables/merge-orders`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+        },
+        body: JSON.stringify({
+          sourceOrderId: source.id,
+          destinationOrderId: destination.id
+        })
       }
+    );
 
-      for (const item of source.items) {
-        const existingItem = destination.items.find(
-          x =>
-            x.productId === item.productId &&
-            x.price === item.price
-        );
+    const result = await response.json();
 
-        if (existingItem) {
-          existingItem.qty += item.qty;
-        } else {
-          destination.items.push({ ...item });
-        }
-      }
-
-      source.status = "merged";
-      source.mergedInto = destination.id;
-      source.mergedAt = now();
-
-      destination.updatedAt = now();
-            // Đồng bộ trạng thái bàn với SQL Server
-      try {
-        await updateTableStatus(destinationId, "occupied");
-
-        if (!getOpenOrder(sourceId)) {
-          await updateTableStatus(sourceId, "available");
-        }
-      } catch (error) {
-        console.error("Lỗi cập nhật trạng thái khi gộp bàn:", error);
-        saveDatabase();
-        await loadTablesFromSQL();
-        notify(
-          "Đơn đã gộp nhưng cập nhật trạng thái SQL thất bại: " +
-          error.message,
-          true
-        );
-        return;
-      }
-
-      if (
-        state.tableId === sourceId ||
-        state.tableId === destinationId
-      ) {
-        state.tableId = destinationId;
-        loadCart();
-      }
-
-      saveDatabase();
-      await loadTablesFromSQL();
-
-      notify(
-        `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
+    if (!response.ok) {
+      throw new Error(
+        result.error || "Không thể gộp bàn."
       );
     }
+
+    // SQL thành công mới cập nhật dữ liệu giao diện
+    for (const item of source.items) {
+      const existingItem = destination.items.find(
+        x =>
+          x.productId === item.productId &&
+          x.price === item.price
+      );
+
+      if (existingItem) {
+        existingItem.qty += item.qty;
+      } else {
+        destination.items.push({ ...item });
+      }
+    }
+
+    source.status = "merged";
+    source.mergedInto = destination.id;
+    source.mergedAt = now();
+
+    destination.updatedAt = now();
+
+    if (
+      state.tableId === sourceId ||
+      state.tableId === destinationId
+    ) {
+      state.tableId = destinationId;
+      loadCart();
+    }
+
+    saveDatabase();
+    await loadTablesFromSQL();
+
+    notify(
+      `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
+    );
+
+  } catch (error) {
+    console.error("Lỗi gộp bàn:", error);
+
+    notify(
+      error.message || "Không thể gộp bàn.",
+      true
+    );
+  }
+
+  return;
+}
+}
   }
 
   // =====================================================
@@ -1529,7 +1552,7 @@ if (mode === "merge") {
     }).join("");
   }
 
-  function saveOrder() {
+async function saveOrder() {
     if (!checkOrderPermission()) return false;
 
     if (state.cart.length === 0) {
@@ -1557,15 +1580,55 @@ if (mode === "merge") {
       });
     }
 
+  const order = getOpenOrder(state.tableId);
+
+  if (!order) {
+    notify("Không tìm thấy đơn hàng để đồng bộ.", true);
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_URL}/tables/sync-order`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          tableId: order.tableId,
+          items: order.items
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || "Không thể lưu đơn hàng vào SQL Server"
+      );
+    }
+
     saveDatabase();
+    await loadTablesFromSQL();
+
     return true;
+
+  } catch (error) {
+    console.error("Lỗi lưu đơn hàng:", error);
+    notify(error.message, true);
+    return false;
+  }
   }
 
   // =====================================================
   // 13. THANH TOAN
   // =====================================================
 
-  function checkout(method, discount) {
+async function checkout(method, discount) {
     if (!canPay()) {
       notify("Bạn không có quyền thanh toán.", true);
       return;
@@ -1585,7 +1648,7 @@ if (mode === "merge") {
       return;
     }
 
-    if (!saveOrder()) return;
+if (!(await saveOrder())) return;
 
     const order = getOpenOrder(state.tableId);
 
@@ -1607,6 +1670,38 @@ if (mode === "merge") {
     }
 
     const total = subtotal - discount;
+
+    // Thanh toán trong SQL Server trước khi cập nhật giao diện
+    try {
+      const response = await fetch(
+        `${API_URL}/tables/pay-order`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+          },
+          body: JSON.stringify({
+            orderId: order.id,
+            tableId: order.tableId
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Thanh toán SQL Server thất bại."
+        );
+      }
+
+    } catch (error) {
+      console.error("Lỗi thanh toán SQL Server:", error);
+      notify(error.message || "Không thể thanh toán.", true);
+      return;
+    }
+
 
     db.invoices.push({
       id: createId("HD"),
@@ -2248,9 +2343,6 @@ if (mode === "merge") {
                 Bàn trống
               </option>
 
-              <option value="occupied" ${table.status === "occupied" ? "selected" : ""}>
-                Đang phục vụ
-              </option>
 
               <option value="reserved" ${table.status === "reserved" ? "selected" : ""}>
                 Đã đặt trước
@@ -2723,7 +2815,8 @@ app.addEventListener("click", async event => {
         const response = await fetch(
           `${API_URL}/tables/${encodeURIComponent(tableId)}`,
           {
-            method: "DELETE"
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}` }
           }
         );
 
@@ -2803,7 +2896,11 @@ app.addEventListener("click", async event => {
     // CHON BAN
     if (target.dataset.table) {
       if (!checkOrderPermission()) return;
-
+      const selectedTable = db.tables.find(t => t.id === target.dataset.table);
+      if (!selectedTable || ["reserved", "maintenance"].includes(selectedTable.status)) {
+        notify("Bàn đã đặt trước hoặc đang bảo trì.", true);
+        return;
+      }
       state.tableId = target.dataset.table;
       loadCart();
 
@@ -2954,12 +3051,12 @@ app.addEventListener("click", async event => {
         render();
         break;
 
-      case "save-order":
-        if (saveOrder()) {
-          render();
-          notify("Đã lưu đơn hàng thành công.");
-        }
-        break;
+case "save-order":
+  if (await saveOrder()) {
+    render();
+    notify("Đã lưu đơn hàng thành công.");
+  }
+  break;
 
       case "open-pay":
         if (!canPay()) {
@@ -3061,10 +3158,7 @@ app.addEventListener("click", async event => {
       const status = String(formData.get("status") || "");
 
       const validStatuses = [
-        "available",
-        "occupied",
-        "reserved",
-        "maintenance"
+        "available", "reserved", "maintenance"
       ];
 
       if (!validStatuses.includes(status)) {
@@ -3078,7 +3172,8 @@ app.addEventListener("click", async event => {
           {
             method: "PATCH",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
             },
             body: JSON.stringify({ status })
           }
@@ -3144,7 +3239,8 @@ app.addEventListener("click", async event => {
           {
             method: "PUT",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
             },
             body: JSON.stringify({
               table_name,
@@ -3211,7 +3307,8 @@ app.addEventListener("click", async event => {
         const response = await fetch(`${API_URL}/tables`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
           },
           body: JSON.stringify({
             table_id,
