@@ -67,7 +67,7 @@ function checkInventoryPermission(req, res, next) {
         req.inventoryUser?.role || ""
     ).toLowerCase();
 
-    if (role !== "admin" && role !== "kho") {
+    if (!["admin", "kho", "inventory"].includes(role)) {
         return res.status(403).json({
             success: false,
             error: "Ban khong co quyen quan ly kho"
@@ -102,9 +102,12 @@ function cleanAuditNote(value) {
 }
 
 // 3. Lay danh sach nguyen lieu tu SQL Server
-router.get("/ingredients", checkLogin, async (req, res) => {
+router.get("/ingredients", checkLogin, checkInventoryPermission, async (req, res) => {
     try {
-        const result = await req.pool.request().query(`
+        const includeInactive = req.query.status === "all";
+        const result = await req.pool.request()
+            .input("includeInactive", sql.Bit, includeInactive)
+            .query(`
             SELECT
                 material_id,
                 material_name,
@@ -113,8 +116,8 @@ router.get("/ingredients", checkLogin, async (req, res) => {
                 min_quantity,
                 is_active
             FROM dbo.materials
-            WHERE is_active = 1
-            ORDER BY material_name
+            WHERE is_active = 1 OR @includeInactive = 1
+            ORDER BY material_name, material_id
         `);
 
         return res.json({
@@ -283,6 +286,9 @@ router.post(
                 .query(`
                     SELECT material_id
                     FROM dbo.materials WITH (UPDLOCK, HOLDLOCK)
+                    UNION
+                    SELECT material_id
+                    FROM dbo.inventory_audit_logs WITH (HOLDLOCK)
                 `);
 
             let maxId = 0;
@@ -629,7 +635,7 @@ router.get(
                     m.unit,
                     t.transaction_type,
                     t.quantity,
-                    t.transaction_date,
+                    CONVERT(VARCHAR(23), t.transaction_date, 126) + '+07:00' AS transaction_date,
                     t.employee_id,
                     t.user_id,
                     COALESCE(
@@ -820,13 +826,124 @@ router.put("/ingredients/:id", checkLogin, checkInventoryPermission, async (req,
 });
 
 /*
+ * Xóa nguyên liệu chưa phát sinh giao dịch hoặc liên kết công thức.
+ * Migration 006 cho phép giữ nhật ký sau khi xóa nguyên liệu.
+ */
+router.delete("/ingredients/:id", checkLogin, checkInventoryPermission, async (req, res) => {
+    const materialId = req.params.id.trim();
+    if (!materialId || materialId.length > 10) {
+        return res.status(400).json({ success: false, error: "Mã nguyên liệu không hợp lệ." });
+    }
+
+    const tx = new sql.Transaction(req.pool);
+    let started = false;
+    try {
+        await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        started = true;
+
+        const found = await new sql.Request(tx)
+            .input("id", sql.VarChar(10), materialId)
+            .query(`
+                SELECT material_id, material_name, unit, quantity, min_quantity, is_active
+                FROM dbo.materials WITH (UPDLOCK, HOLDLOCK)
+                WHERE material_id = @id
+            `);
+        const material = found.recordset[0];
+        if (!material) {
+            await tx.rollback();
+            return res.status(404).json({ success: false, error: "Không tìm thấy nguyên liệu." });
+        }
+        if (Number(material.quantity) !== 0) {
+            await tx.rollback();
+            return res.status(409).json({
+                success: false,
+                error: "Nguyên liệu còn tồn kho. Bạn có thể chọn Ngừng sử dụng."
+            });
+        }
+
+        const references = await new sql.Request(tx)
+            .input("id", sql.VarChar(10), materialId)
+            .query(`
+                DECLARE @usedInRecipe BIT = 0;
+                IF OBJECT_ID(N'dbo.product_recipes', N'U') IS NOT NULL
+                BEGIN
+                    EXEC sys.sp_executesql
+                        N'SET @used = CASE WHEN EXISTS (
+                            SELECT 1 FROM dbo.product_recipes WITH (UPDLOCK, HOLDLOCK)
+                            WHERE material_id = @materialId
+                        ) THEN 1 ELSE 0 END;',
+                        N'@materialId VARCHAR(10), @used BIT OUTPUT',
+                        @materialId = @id, @used = @usedInRecipe OUTPUT;
+                END;
+
+                SELECT @usedInRecipe AS used_in_recipe,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM dbo.inventory_transactions WITH (UPDLOCK, HOLDLOCK)
+                        WHERE material_id = @id
+                    ) THEN 1 ELSE 0 END AS has_transactions;
+            `);
+        const { used_in_recipe, has_transactions } = references.recordset[0];
+        if (used_in_recipe || has_transactions) {
+            await tx.rollback();
+            return res.status(409).json({
+                success: false,
+                error: "Nguyên liệu đã có giao dịch hoặc được dùng trong công thức. Hãy chọn Ngừng sử dụng."
+            });
+        }
+
+        await new sql.Request(tx)
+            .input("id", sql.VarChar(10), materialId)
+            .query("DELETE FROM dbo.materials WHERE material_id = @id");
+        await writeInventoryAudit(tx, {
+            materialId: material.material_id,
+            action: "DELETE",
+            userId: req.inventoryUser.user_id,
+            oldData: material
+        });
+
+        await tx.commit();
+        return res.json({ success: true, message: "Đã xóa nguyên liệu." });
+    } catch (error) {
+        if (started) {
+            try {
+                await tx.rollback();
+            } catch (rollbackError) {
+                console.error("Rollback inventory delete:", rollbackError);
+            }
+        }
+
+        if (error.number === 547) {
+            return res.status(409).json({
+                success: false,
+                error: "Nguyên liệu đang được dữ liệu khác tham chiếu. Hãy chọn Ngừng sử dụng."
+            });
+        }
+        if (error.number === 1205) {
+            return res.status(409).json({
+                success: false,
+                error: "Nguyên liệu đang được cập nhật. Hãy tải lại và thử lại."
+            });
+        }
+        console.error("Delete ingredient error:", error);
+        return res.status(500).json({ success: false, error: "Không thể xóa nguyên liệu." });
+    }
+});
+
+/*
  * NHAT KY THAO TAC NGUYEN LIEU (KE CA DA NGUNG SU DUNG)
  * GET /api/inventory/audit-logs
  */
 router.get("/audit-logs", checkLogin, checkInventoryPermission, async (req, res) => {
     try {
         const result = await req.pool.request().query(`
-            SELECT TOP (200) a.log_id, a.material_id, m.material_name,
+            SELECT TOP (200) a.log_id, a.material_id,
+                   COALESCE(m.material_name, JSON_VALUE(
+                       CASE WHEN ISJSON(a.old_data) = 1 THEN a.old_data END,
+                       '$.material_name'
+                   ), JSON_VALUE(
+                       CASE WHEN ISJSON(a.new_data) = 1 THEN a.new_data END,
+                       '$.material_name'
+                   )) AS material_name,
                    a.action_type, a.user_id, u.username AS performed_by,
                    a.old_data, a.new_data, a.note, a.created_at
             FROM dbo.inventory_audit_logs AS a
