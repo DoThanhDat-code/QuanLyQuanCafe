@@ -1754,6 +1754,14 @@ async function openPaymentPreview(id) {
 }
 // Orders integration contract: call after SQL order has been saved.
 window.openPaymentPreview = openPaymentPreview;
+function createPaymentQR(amount, orderId) {
+    const bank = "MB";
+    const account = "012345679";
+    const accountName = "MOC CAFE";
+    const content = "THANH TOAN " + orderId;
+
+    return `https://img.vietqr.io/image/${bank}-${account}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent(accountName)}`;
+}
 function paymentOrderFormHTML() {
   if (!paymentFormOpen) return "";
   const d=paymentPreview;
@@ -1761,7 +1769,17 @@ function paymentOrderFormHTML() {
   ${paymentOrdersError?`<p>${escapeHTML(paymentOrdersError)}</p>`:""}
   <div class="actions">${paymentOrders.map(o=>`<button class="btn" data-payment-preview="${escapeHTML(o.order_id)}">${escapeHTML(o.table_name)} · ${money(Number(o.subtotal))}</button>`).join("")}</div>
   ${paymentOrdersLoading?"Đang tải...":(!paymentOrders.length&&!d?"Chưa có bàn chờ thanh toán.":"")}
-  ${d?`${paymentItems(d)}<form id="sql-payment-form"><input type="hidden" name="order_id" value="${escapeHTML(d.order_id)}"><label>Phương thức <select name="payment_method"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option></select></label><div id="payment-cash"><label>Tiền khách đưa <input name="cash_received" type="number" min="${Number(d.subtotal)}" max="999999999999" step="1" required></label><p>Tiền trả lại: <strong id="payment-change">0 đ</strong></p></div><div id="payment-transfer" hidden><label><input type="checkbox" name="transfer_confirmed"> Đã nhận đủ tiền chuyển khoản</label><label>Mã giao dịch (nếu có) <input name="transaction_reference" maxlength="100"></label></div><button class="btn primary" type="submit" ${paymentBusy?"disabled":""}>Xác nhận thanh toán</button></form>`:""}
+  ${d?`${paymentItems(d)}<form id="sql-payment-form"><input type="hidden" name="order_id" value=z"${escapeHTML(d.order_id)}"><label>Phương thức <select name="payment_method"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option></select></label><div id="payment-cash"><label>Tiền khách đưa <input name="cash_received" type="number" min="${Number(d.subtotal)}" max="999999999999" step="1" required></label><p>Tiền trả lại: <strong id="payment-change">0 đ</strong></p></div><div id="payment-transfer" hidden><div style="text-align:center;padding:20px;">
+    <h3>Quét mã QR thanh toán</h3>
+
+    <img
+        src="${createPaymentQR(Number(d.subtotal), d.order_id)}"
+        alt="Mã QR thanh toán"
+        style="width:250px;max-width:100%;border-radius:12px;"
+    >
+
+  
+</div><label><input type="checkbox" name="transfer_confirmed"> Đã nhận đủ tiền chuyển khoản</label><label>Mã giao dịch (nếu có) <input name="transaction_reference" maxlength="100"></label></div><button class="btn primary" type="submit" ${paymentBusy?"disabled":""}>Xác nhận thanh toán</button></form>`:""}
   <button class="btn" id="close-payment-form">Quay lại</button></div>`;
 }
 app.addEventListener("input",e=>{
@@ -1770,13 +1788,75 @@ app.addEventListener("input",e=>{
   f.querySelector("#payment-change").textContent=money(Math.max(0,Number(f.elements.cash_received.value)-Number(paymentPreview.subtotal)));
 });
 async function showSQLInvoice(id) {
-  try {const d=await paymentAPI("/"+encodeURIComponent(id)+"/invoice"); const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px"; dialog.innerHTML=`<section><h2>MỘC Coffee – Hóa đơn ${escapeHTML(d.invoice_id)}</h2><p>${escapeHTML(new Date(d.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(d.employee_name||d.username||d.employee_id||"Không rõ")}</p>${paymentItems(d)}<p>Giảm giá: ${money(Number(d.discount))}</p><h3>Đã thanh toán: ${money(Number(d.total_amount))}</h3><p>Phương thức: ${escapeHTML(d.payment_method)}</p>${d.cash_received!=null?`<p>Khách đưa: ${money(Number(d.cash_received))} · Trả lại: ${money(Number(d.cash_received)-Number(d.total_amount))}</p>`:""}</section><button class="btn" data-print>In hóa đơn</button> <button class="btn" data-close>Đóng</button>`; document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove()); dialog.querySelector("[data-close]").onclick=()=>dialog.close(); dialog.querySelector("[data-print]").onclick=()=>{const w=window.open("","_blank");if(!w){notify("Hãy cho phép cửa sổ in",true);return;}w.document.write('<html><head><title>Hóa đơn</title><style>body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}</style></head><body>'+dialog.querySelector("section").innerHTML+'</body></html>');w.document.close();w.focus();w.print();};dialog.showModal();}catch(e){notify(e.message,true);}
+  try {const d=await paymentAPI("/"+encodeURIComponent(id)+"/invoice"); const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px"; dialog.innerHTML=`<section><h2>MỘC Coffee – Hóa đơn ${escapeHTML(d.invoice_id)}</h2><p>${escapeHTML(new Date(d.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(d.employee_name||d.username||d.employee_id||"Không rõ")}</p>${paymentItems(d)}<h3>Đã thanh toán: ${money(Number(d.total_amount))}</h3>${d.payment_method === "transfer" ? `
+<div style="text-align:center;margin:20px 0;">
+  <h3>Mã QR chuyển khoản</h3>
+
+  <img
+    src="https://img.vietqr.io/image/MB-012345679-compact2.png?amount=${Number(d.total_amount)}&addInfo=${encodeURIComponent(d.order_id)}&accountName=MOC%20CAFE"
+    style="width:200px;max-width:100%;"
+    alt="QR thanh toán"
+  >
+
+ 
+</div>
+` : ""}<p><b>Phương thức:</b> ${
+  d.payment_method === "cash" ? "Tiền mặt" :
+  d.payment_method === "transfer" ? "Chuyển khoản" :
+  d.payment_method === "card" ? "Thẻ ngân hàng" :
+  "Không xác định"
+}</p>${d.cash_received!=null?`<p>Khách đưa: ${money(Number(d.cash_received))} · Trả lại: ${money(Number(d.cash_received)-Number(d.total_amount))}</p>`:""}</section><button class="btn" data-print>In hóa đơn</button> <button class="btn" data-close>Đóng</button>`; document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove()); dialog.querySelector("[data-close]").onclick=()=>dialog.close(); dialog.querySelector("[data-print]").onclick=()=>{const w=window.open("","_blank");if(!w){notify("Hãy cho phép cửa sổ in",true);return;}w.document.write('<html><head><title>Hóa đơn</title><style>body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}</style></head><body>'+dialog.querySelector("section").innerHTML+'</body></html>');w.document.close();w.focus();w.print();};dialog.showModal();}catch(e){notify(e.message,true);}
 }
 async function submitSQLPayment(form) {
-  if(paymentBusy||!canPay()||!paymentPreview)return;
-  const v=Object.fromEntries(new FormData(form)); paymentBusy=true;const button=form.querySelector('[type="submit"]');button.disabled=true;
-  try {const data=await paymentAPI("",{order_id:v.order_id,payment_method:v.payment_method,discount:0,expected_total:Number(paymentPreview.subtotal),cash_received:v.cash_received===""?null:Number(v.cash_received),transfer_confirmed:v.transfer_confirmed==="on",transaction_reference:v.transaction_reference}); paymentPreview=null;paymentFormOpen=false;paymentsLoaded=false;await loadPaymentsFromSQL();await loadTablesFromSQL();await loadPaymentOrders();notify("Thanh toán thành công");await showSQLInvoice(data.invoice_id);}
-  catch(e){notify(e.message,true);}finally{paymentBusy=false;button.disabled=false;}
+  if (paymentBusy || !canPay() || !paymentPreview) return;
+
+  const v = Object.fromEntries(new FormData(form));
+
+  const orderId = String(paymentPreview.order_id || "").trim();
+
+  if (!orderId) {
+    notify("Không lấy được mã đơn hàng.", true);
+    return;
+  }
+
+  console.log("Mã đơn hàng gửi đi:", orderId);
+
+  paymentBusy = true;
+
+  const button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+
+  try {
+    const data = await paymentAPI("", {
+      order_id: orderId,
+      payment_method: v.payment_method,
+      discount: 0,
+      expected_total: Number(paymentPreview.subtotal),
+      cash_received: v.cash_received === ""
+        ? null
+        : Number(v.cash_received),
+      transfer_confirmed: v.transfer_confirmed === "on",
+      transaction_reference: v.transaction_reference
+    });
+
+    paymentPreview = null;
+    paymentFormOpen = false;
+    paymentsLoaded = false;
+
+    await loadPaymentsFromSQL();
+    await loadTablesFromSQL();
+    await loadPaymentOrders();
+
+    notify("Thanh toán thành công");
+
+    await showSQLInvoice(data.invoice_id);
+
+  } catch (e) {
+    notify(e.message, true);
+  } finally {
+    paymentBusy = false;
+    button.disabled = false;
+  }
 }
 function paymentsPage() {
   const invoices = [...sqlInvoices].sort(
@@ -2327,16 +2407,7 @@ ${paymentOrderFormHTML()}
             <b>${money(subtotal)}</b>
           </div>
 
-          <div class="field">
-            <label>Giảm giá (VNĐ)</label>
-
-            <input
-              name="discount"
-              type="number"
-              min="0"
-              max="${subtotal}"
-              value="0">
-          </div>
+       <input type="hidden" name="discount" value="0">
 
           <div class="field">
             <label>Phương thức thanh toán</label>
