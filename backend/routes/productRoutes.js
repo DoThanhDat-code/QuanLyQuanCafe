@@ -722,5 +722,106 @@ router.patch(
 // KHONG XOA CUNG SAN PHAM
 // BAO TOAN DON HANG VA HOA DON LICH SU
 // ============================================
+// =====================================================
+// 9. XOA SAN PHAM
+// DELETE /api/products/:id
+// =====================================================
 
+router.delete(
+  "/:id",
+  requireManager,
+  async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+
+      if (!id || id.length > 10) {
+        return res.status(400).json({
+          error: "Mã sản phẩm không hợp lệ."
+        });
+      }
+
+      const pool = await connectDB();
+
+      // 1. Kiểm tra sản phẩm có tồn tại không
+      const product = await pool.request()
+        .input("id", sql.VarChar(10), id)
+        .query(`
+          SELECT product_id
+          FROM dbo.products
+          WHERE product_id = @id
+        `);
+
+      if (product.recordset.length === 0) {
+        return res.status(404).json({
+          error: "Không tìm thấy sản phẩm."
+        });
+      }
+
+      // 2. Kiểm tra sản phẩm đã có trong đơn hàng chưa
+      const order = await pool.request()
+        .input("id", sql.VarChar(10), id)
+        .query(`
+          SELECT TOP 1 product_id
+          FROM dbo.order_details
+          WHERE product_id = @id
+        `);
+
+      if (order.recordset.length > 0) {
+        return res.status(409).json({
+          error: "Món đã có trong đơn hàng, không thể xóa. Vui lòng ngừng bán món này."
+        });
+      }
+
+      // 3. Xóa sản phẩm chưa có trong đơn hàng
+      const result = await pool.request()
+        .input("id", sql.VarChar(10), id)
+        .query(`
+          DELETE FROM dbo.products
+          WHERE product_id = @id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM dbo.order_details
+            WHERE product_id = @id
+          )
+        `);
+
+      if (result.rowsAffected[0] === 0) {
+        const existing = await pool.request()
+          .input("id", sql.VarChar(10), id)
+          .query(`
+            SELECT product_id
+            FROM dbo.products
+            WHERE product_id = @id
+          `);
+
+        if (existing.recordset.length === 0) {
+          return res.status(404).json({
+            error: "Không tìm thấy sản phẩm."
+          });
+        }
+
+        return res.status(409).json({
+          error: "Không thể xóa món đã phát sinh đơn hàng."
+        });
+      }
+
+      // 4. Xóa thành công
+      return res.status(204).end();
+
+    } catch (error) {
+      console.error("Lỗi xóa sản phẩm:", error);
+
+      // Lỗi ràng buộc khóa ngoại SQL Server
+      if (error.number === 547) {
+        return res.status(409).json({
+          error: "Sản phẩm đang được sử dụng, không thể xóa."
+        });
+      }
+
+      return res.status(500).json({
+        error: "Lỗi máy chủ khi xóa sản phẩm."
+      });
+    }
+  }
+);
 module.exports = router;
