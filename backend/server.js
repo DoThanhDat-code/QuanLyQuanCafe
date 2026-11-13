@@ -1,24 +1,34 @@
 require("dotenv").config();
 
-const accountRoutes = require("./routes/accountRoutes");
 const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./config/db");
 
 const productRoutes = require("./routes/productRoutes");
+const categoryRoutes = require("./routes/categoryRoutes");
 const tableRoutes = require("./routes/tableRoutes");
-const authRoutes = require("./routes/authRoutes");
-const recipeRoutes = require("./routes/recipeRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
 const reportRoutes = require("./routes/reportRoutes");
-const app = express();
 const orderRoutes = require("./routes/orderRoutes");
+const authRoutes = require("./routes/authRoutes");
+const inventoryRoutes = require("./routes/inventoryRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const accountRoutes = require("./routes/accountRoutes");
+const authMiddleware = require("./middleware/authMiddleware");
 
+const app = express();
 
 app.use(cors());
 app.use(express.json());
+
 app.use("/api/auth", authRoutes);
+app.use("/api/inventory", authMiddleware, inventoryRoutes);
 app.use("/api/accounts", accountRoutes);
+app.use("/api/products", authMiddleware, productRoutes);
+app.use("/api/categories", authMiddleware, categoryRoutes);
+app.use("/api/tables", tableRoutes);
+app.use("/api/orders", authMiddleware, orderRoutes);
+app.use("/api/payments", paymentRoutes);
 
 app.get("/", (req, res) => {
     res.json({
@@ -26,21 +36,15 @@ app.get("/", (req, res) => {
     });
 });
 
-app.use("/api/products", productRoutes);
-app.use("/api/tables", tableRoutes);
-app.use("/api/recipes", recipeRoutes);
-app.use("/api/orders", orderRoutes);
-app.use("/api/employees", employeeRoutes);
-app.use("/api/reports", reportRoutes);
+app.use("/api/employees", authMiddleware, employeeRoutes);
+app.use("/api/reports", authMiddleware, reportRoutes);
 
 const PORT = process.env.PORT || 3000;
 
 connectDB()
     .then(() => {
         app.listen(PORT, () => {
-            console.log(
-                `Backend dang chay: http://localhost:${PORT}`
-            );
+            console.log(`Backend dang chay: http://localhost:${PORT}`);
         });
     })
     .catch((error) => {
