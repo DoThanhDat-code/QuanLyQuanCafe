@@ -437,49 +437,59 @@
     }
   }
 
+  // SQL Server la nguon du lieu chinh cho trang thai ban va don dang mo.
   async function loadTablesFromSQL() {
     try {
-      const response = await fetch(`${API_URL}/tables`);
+      const [tablesResponse, ordersResponse] = await Promise.all([
+        fetch(`${API_URL}/tables`),
+        fetch(`${API_URL}/tables/active-orders`, {
+          headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}` }
+        })
+      ]);
 
-      if (!response.ok) {
-        throw new Error("Không thể tải danh sách bàn.");
+      if (!tablesResponse.ok || !ordersResponse.ok) {
+        throw new Error("Không thể đồng bộ bàn và đơn hàng từ SQL Server.");
       }
 
-      const tables = await response.json();
-
-      if (!Array.isArray(tables)) {
-        throw new Error("Dữ liệu bàn không hợp lệ.");
+      const tables = await tablesResponse.json();
+      const orders = await ordersResponse.json();
+      if (!Array.isArray(tables) || !Array.isArray(orders)) {
+        throw new Error("Dữ liệu SQL Server không hợp lệ.");
       }
 
-      db.tables = tables
-        .filter(table => Boolean(table.is_active))
-        .map(table => ({
-          id: table.table_id,
-          name: table.table_name,
-          seats: Number(table.seats),
-          status: table.status,
-          active: true
-        }));
+      db.tables = tables.filter(t => Boolean(t.is_active)).map(t => ({
+        id: t.table_id,
+        name: t.table_name,
+        seats: Number(t.seats),
+        status: t.status,
+        active: true
+      }));
 
-      if (
-        db.tables.length > 0 &&
-        !db.tables.some(table => table.id === state.tableId)
-      ) {
-        state.tableId = db.tables[0].id;
-        loadCart();
-      }
-
-      render();
-
-      console.log(
-        "Đã tải",
-        db.tables.length,
-        "bàn từ SQL Server"
+      // Khong xoa hoa don/lich su; chi thay the cac don dang mo
+      // bang cac don thuc su con ton tai trong SQL Server.
+      db.orders = db.orders.filter(o => o.status !== "open").concat(
+        orders.map(o => ({
+          id: o.order_id,
+          tableId: o.table_id,
+          status: "open",
+          items: o.items.map(i => ({
+            productId: i.productId,
+            qty: Number(i.qty),
+            price: Number(i.price)
+          })),
+          createdAt: o.order_date
+        }))
       );
 
+      if (db.tables.length && !db.tables.some(t => t.id === state.tableId)) {
+        state.tableId = db.tables[0].id;
+      }
+      loadCart();
+      saveDatabase();
+      render();
     } catch (error) {
-      console.error("Loi tai ban:", error);
-      console.warn("Tam su dung danh sach ban demo.");
+      console.error("Lỗi đồng bộ bàn và đơn:", error);
+      notify("Không đồng bộ được bàn/đơn từ SQL Server. Hãy kiểm tra backend.", true);
     }
   }
 
@@ -991,7 +1001,6 @@ const available = db.tables.filter(
 
           <div class="split">
             <b>${escapeHTML(table.id)}</b>
-            <span>🪑 ${table.seats} chỗ</span>
           </div>
 
           <div class="muted">
@@ -1183,6 +1192,8 @@ async function performTableAction(mode) {
       return;
     }
 
+    // Dong bo truoc khi kiem tra, tranh dung don hang cu trong localStorage.
+    await loadTablesFromSQL();
     const source = getOpenOrder(sourceId);
     const destination = getOpenOrder(destinationId);
 
@@ -1266,7 +1277,6 @@ if (mode === "transfer") {
 }
 
 if (mode === "merge") {
-if (mode === "merge") {
   if (!destination) {
     notify("Bàn đích chưa có đơn hàng để gộp.", true);
     return;
@@ -1342,7 +1352,6 @@ if (mode === "merge") {
   }
 
   return;
-}
 }
   }
 
@@ -1554,74 +1563,54 @@ if (mode === "merge") {
 
 async function saveOrder() {
     if (!checkOrderPermission()) return false;
-
-    if (state.cart.length === 0) {
-      notify(
-        "Vui lòng thêm món trước khi lưu đơn.",
-        true
-      );
+    if (!state.cart.length) {
+      notify("Vui lòng thêm món trước khi lưu đơn.", true);
       return false;
     }
 
     const existing = getOpenOrder(state.tableId);
-
+    const orderId = existing?.id || createId("DH");
     const items = state.cart.map(item => ({ ...item }));
 
-    if (existing) {
-      existing.items = items;
-      existing.updatedAt = now();
-    } else {
-      db.orders.push({
-        id: createId("DH"),
-        tableId: state.tableId,
-        items,
-        status: "open",
-        createdAt: now()
-      });
-    }
-
-  const order = getOpenOrder(state.tableId);
-
-  if (!order) {
-    notify("Không tìm thấy đơn hàng để đồng bộ.", true);
-    return false;
-  }
-
-  try {
-    const response = await fetch(
-      `${API_URL}/tables/sync-order`,
-      {
+    try {
+      const response = await fetch(`${API_URL}/tables/sync-order`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+          Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
         },
-        body: JSON.stringify({
-          orderId: order.id,
-          tableId: order.tableId,
-          items: order.items
-        })
+        body: JSON.stringify({ orderId, tableId: state.tableId, items })
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(`API lưu đơn trả về HTTP ${response.status}, không phải JSON. Kiểm tra backend.`);
       }
-    );
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Không thể lưu đơn vào SQL Server.");
+      }
 
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        result.error || "Không thể lưu đơn hàng vào SQL Server"
-      );
+      // Chi ghi localStorage sau khi SQL Server da xac nhan.
+      if (existing) {
+        existing.items = items;
+        existing.updatedAt = now();
+      } else {
+        db.orders.push({
+          id: orderId,
+          tableId: state.tableId,
+          items,
+          status: "open",
+          createdAt: now()
+        });
+      }
+      saveDatabase();
+      await loadTablesFromSQL();
+      return true;
+    } catch (error) {
+      console.error("Lỗi lưu đơn hàng:", error);
+      notify(error.message || "Không thể lưu đơn hàng.", true);
+      return false;
     }
-
-    saveDatabase();
-    await loadTablesFromSQL();
-
-    return true;
-
-  } catch (error) {
-    console.error("Lỗi lưu đơn hàng:", error);
-    notify(error.message, true);
-    return false;
-  }
   }
 
   // =====================================================
@@ -2265,15 +2254,6 @@ if (!(await saveOrder())) return;
               required>
           </div>
 
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="4"
-              required>
-          </div>
 
           ${formButtons("Lưu bàn")}
         </form>
@@ -2308,15 +2288,6 @@ if (!(await saveOrder())) return;
               required>
           </div>
 
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="${table.seats}"
-              required>
-          </div>
 
           ${formButtons("Lưu thay đổi")}
         </form>

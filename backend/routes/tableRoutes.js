@@ -3,53 +3,6 @@ const express = require("express");
 const router = express.Router();
 
 const { sql, connectDB } = require("../config/db");
-const jwt = require("jsonwebtoken");
-
-// Protect every write request to table APIs with an active SQL user.
-// GET requests remain readable for the existing interface.
-router.use(async (req, res, next) => {
-  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
-  try {
-    const auth = req.headers.authorization || "";
-    if (!auth.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Vui lòng đăng nhập trước khi thao tác." });
-    }
-    const decoded = jwt.verify(auth.slice(7), process.env.JWT_SECRET, { algorithms: ["HS256"] });
-    if (!decoded.userId) return res.status(401).json({ error: "Token không hợp lệ." });
-    const pool = await connectDB();
-    const result = await pool.request()
-      .input("userId", sql.VarChar(10), decoded.userId)
-      .query("SELECT role FROM dbo.users WHERE user_id = @userId AND is_active = 1");
-    if (!result.recordset.length) return res.status(401).json({ error: "Tài khoản không còn hoạt động." });
-    const rawRole = String(result.recordset[0].role || "").toLowerCase();
-    const roles = { admin: "manager", manager: "manager", phucvu: "service", service: "service", thungan: "cashier", cashier: "cashier" };
-    const role = roles[rawRole];
-    const path = req.path;
-    let allowed;
-    if (req.method === "POST" && ["/sync-order", "/transfer-order", "/merge-orders"].includes(path)) {
-      allowed = ["manager", "service", "cashier"];
-    } else if (req.method === "POST" && path === "/pay-order") {
-      allowed = ["manager", "cashier"];
-    } else if ((req.method === "POST" && path === "/") ||
-               (req.method === "PUT" && /^\/[^/]+$/.test(path)) ||
-               (req.method === "DELETE" && /^\/[^/]+$/.test(path)) ||
-               (req.method === "PATCH" && /^\/[^/]+\/status$/.test(path))) {
-      allowed = ["manager"];
-    } else {
-      return res.status(404).json({ error: "API không tồn tại." });
-    }
-    if (!allowed.includes(role)) return res.status(403).json({ error: "Bạn không có quyền thực hiện thao tác này." });
-    req.authUser = { userId: decoded.userId, role };
-    next();
-  } catch (error) {
-    if (["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(error.name)) {
-      return res.status(401).json({ error: "Phiên đăng nhập hết hạn hoặc token không hợp lệ." });
-    }
-    console.error("Lỗi phân quyền bàn:", error);
-    return res.status(500).json({ error: "Không thể kiểm tra quyền tài khoản." });
-  }
-});
-
 
 // 1. LAY DANH SACH BAN
 // Giu nguyen API GET hien tai
@@ -84,6 +37,43 @@ const result = await pool.request().query(`
             error: "Khong the lay danh sach ban"
         });
     }
+});
+
+// Lay cac don dang mo kem chi tiet mon de frontend khong phu thuoc localStorage.
+router.get("/active-orders", async (req, res) => {
+  try {
+    const pool = await connectDB();
+    const result = await pool.request().query(`
+      SELECT o.order_id, o.table_id, o.order_date,
+             od.product_id, od.quantity, od.unit_price
+      FROM dbo.orders AS o
+      LEFT JOIN dbo.order_details AS od ON od.order_id = o.order_id
+      WHERE o.status IN ('pending', 'serving')
+      ORDER BY o.order_id, od.order_detail_id
+    `);
+    const byId = new Map();
+    for (const row of result.recordset) {
+      if (!byId.has(row.order_id)) {
+        byId.set(row.order_id, {
+          order_id: row.order_id,
+          table_id: row.table_id,
+          order_date: row.order_date,
+          items: []
+        });
+      }
+      if (row.product_id !== null) {
+        byId.get(row.order_id).items.push({
+          productId: row.product_id,
+          qty: row.quantity,
+          price: Number(row.unit_price)
+        });
+      }
+    }
+    res.json([...byId.values()]);
+  } catch (error) {
+    console.error("Loi lay don dang mo:", error);
+    res.status(500).json({ error: "Khong the lay don dang mo." });
+  }
 });
 
 // 2. XEM CHI TIET BAN
@@ -396,7 +386,7 @@ router.post("/transfer-order", async (req, res) => {
       });
     }
 
-    if (destination.status !== "available") {
+    if (["reserved", "maintenance"].includes(destination.status)) {
       await transaction.rollback();
       transaction = null;
 
@@ -946,38 +936,6 @@ router.post("/sync-order", async (req, res) => {
     }
     console.error("Loi sync-order:", error);
     return res.status(500).json({ error: "Khong the luu don hang vao SQL Server." });
-  }
-});
-
-
-// Admin changes table status manually; occupied is determined by active orders.
-router.patch("/:id/status", async (req, res) => {
-  const status = req.body?.status;
-  if (!["available", "reserved", "maintenance"].includes(status)) {
-    return res.status(400).json({ error: "Chỉ được chọn Trống, Đã đặt hoặc Bảo trì." });
-  }
-  try {
-    const pool = await connectDB();
-    const result = await pool.request()
-      .input("id", sql.VarChar(10), req.params.id)
-      .input("status", sql.VarChar(20), status)
-      .query(`
-        UPDATE dbo.[tables]
-        SET status = @status
-        OUTPUT INSERTED.table_id, INSERTED.status
-        WHERE table_id = @id AND is_active = 1
-          AND NOT EXISTS (
-            SELECT 1 FROM dbo.orders
-            WHERE table_id = @id AND status IN ('pending', 'serving')
-          )
-      `);
-    if (!result.recordset.length) {
-      return res.status(409).json({ error: "Bàn không tồn tại, đã ngừng hoạt động hoặc đang có đơn chưa thanh toán." });
-    }
-    return res.json({ message: "Đổi trạng thái thành công.", table: result.recordset[0] });
-  } catch (error) {
-    console.error("Lỗi đổi trạng thái bàn:", error);
-    return res.status(500).json({ error: "Không thể cập nhật trạng thái bàn." });
   }
 });
 
