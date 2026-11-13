@@ -208,23 +208,6 @@ function isAdmin() {
       }
     ];
 
-    const materialSource = [
-      ["Hạt cà phê", "kg", 14, 5],
-      ["Sữa tươi", "lít", 8, 12],
-      ["Đường nâu", "kg", 18, 6],
-      ["Trà đào", "hộp", 17, 8],
-      ["Bột matcha", "kg", 2, 4],
-      ["Ly giấy", "cái", 160, 50]
-    ];
-
-    const materials = materialSource.map((item, index) => ({
-      id: "NL" + String(index + 1).padStart(2, "0"),
-      name: item[0],
-      unit: item[1],
-      stock: item[2],
-      minimum: item[3]
-    }));
-
     const invoices = [];
 
     for (let i = 0; i < 10; i++) {
@@ -251,10 +234,8 @@ function isAdmin() {
       tables,
       products,
       staff,
-      materials,
       orders: [],
-      invoices,
-      transactions: []
+      invoices
     };
   }
 
@@ -334,6 +315,7 @@ authenticatedUser = {
   }
 
   function clearSession() {
+    inventory = createInventoryState();
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(SESSION_KEY);
 
@@ -437,6 +419,10 @@ authenticatedUser = {
     }
 
     await loadTablesFromSQL();
+
+    if (canManageStock()) {
+      await loadInventoryFromSQL();
+    }
   }
 
   // =====================================================
@@ -695,10 +681,7 @@ async function resumeProductInSQL(id) {
   }
 
   function canManageStock() {
-    return [
-      "manager",
-      "stock"
-    ].includes(currentUser()?.role);
+    return ["admin", "kho", "inventory"].includes(currentUser()?.originalRole);
   }
 
   function notify(message, error = false) {
@@ -796,13 +779,15 @@ async function resumeProductInSQL(id) {
     }
 
     
-state.page = page;
-render();
+    state.page = page;
+    if (page === "inventory" && canManageStock()) {
+      void loadInventoryFromSQL();
+    }
+    render();
 
-// Tu dong tai danh sach khi Admin mo trang
-if (page === "accounts" && isAdmin()) {
-    loadAccountsFromSQL();
-}
+    if (page === "accounts" && isAdmin()) {
+      loadAccountsFromSQL();
+    }
 
   }
 
@@ -1282,8 +1267,8 @@ ${account.role === "admin" ? "—" : `
       table => getOpenOrder(table.id)
     ).length;
 
-    const lowStock = db.materials.filter(
-      material => material.stock < material.minimum
+    const lowStock = inventory.materials?.filter(
+      material => material.active && material.stock < material.minimum
     ).length;
 
     const recentInvoices = [...db.invoices]
@@ -1321,11 +1306,11 @@ ${account.role === "admin" ? "—" : `
           "Trạng thái bàn hiện tại"
         )}
 
-        ${statsCard(
+        ${canManageStock() ? statsCard(
           "Nguyên liệu sắp hết",
-          lowStock,
+          lowStock ?? "—",
           "Cần kiểm tra tồn kho"
-        )}
+        ) : ""}
 
       </div>
 
@@ -2572,100 +2557,183 @@ ${paymentOrderFormHTML()}
   // 16. QUAN LY KHO NGUYEN LIEU
   // =====================================================
 
+  function createInventoryState() {
+    return {
+      materials: null,
+      history: null,
+      showInactive: false,
+      loading: false,
+      busy: false,
+      errors: {}
+    };
+  }
+
+  let inventory = createInventoryState();
+
+  async function loadInventoryFromSQL() {
+    if (!canManageStock() || inventory.loading || inventory.busy) return;
+    const current = inventory;
+    current.loading = true;
+    current.errors = {};
+
+    const sections = [
+      ["materials", "/inventory/ingredients?status=all", "ingredients", "danh sách nguyên liệu"],
+      ["history", "/inventory/history", "history", "lịch sử nhập/xuất"]
+    ];
+
+    await Promise.all(sections.map(async ([key, path, field, label]) => {
+      try {
+        const data = await apiRequest(path);
+        if (!Array.isArray(data[field])) {
+          throw new Error("Phản hồi từ máy chủ không hợp lệ.");
+        }
+
+        current[key] = key === "materials" ? data[field].map(material => ({
+          id: material.material_id,
+          name: material.material_name,
+          unit: material.unit,
+          stock: Number(material.quantity),
+          minimum: Number(material.min_quantity),
+          active: Boolean(material.is_active)
+        })) : data[field];
+      } catch (error) {
+        current[key] = null;
+        current.errors[key] = `Không tải được ${label}. ${error.message}`;
+      }
+    }));
+
+    current.loading = false;
+    if (inventory === current && ["inventory", "dashboard"].includes(state.page)) {
+      render();
+    }
+  }
+
   function inventoryPage() {
-    const low = db.materials.filter(
-      material => material.stock < material.minimum
-    );
+    if (!canManageStock()) {
+      return heading("Quản lý kho", "Tài khoản này không có quyền quản lý kho.");
+    }
 
-    const rows = db.materials.map(material => `
+    const materials = inventory.materials ?? [];
+    const low = materials.filter(material => material.active && material.stock < material.minimum);
+    const visibleMaterials = materials.filter(material => material.active !== inventory.showInactive);
+    const canTransact = !inventory.loading && !inventory.busy && !inventory.errors.materials;
+    const rows = visibleMaterials.map(material => `
       <tr>
-
+        <td><b>${escapeHTML(material.name)}</b><div class="muted">${escapeHTML(material.id)}</div></td>
+        <td>${material.stock} ${escapeHTML(material.unit)}</td>
+        <td>${material.minimum} ${escapeHTML(material.unit)}</td>
+        <td>${!material.active ? pill("Đã ngừng sử dụng") :
+          material.stock < material.minimum ? pill("Sắp hết", "red") : pill("Đủ hàng", "green")}</td>
         <td>
-          <b>${escapeHTML(material.name)}</b>
-          <div class="muted">
-            ${escapeHTML(material.id)}
+          <div class="actions">
+            ${material.active ? `
+              <button type="button" class="btn small" data-stock="${escapeHTML(material.id)}" ${canTransact ? "" : "disabled"}>Nhập / xuất</button>
+              <button type="button" class="btn small" data-action="deactivate-material" data-material-id="${escapeHTML(material.id)}" ${canTransact ? "" : "disabled"}>Ngừng sử dụng</button>
+            ` : `
+              <button type="button" class="btn small" data-action="restore-material" data-material-id="${escapeHTML(material.id)}" ${canTransact ? "" : "disabled"}>Khôi phục</button>
+            `}
+            <button type="button" class="btn small" data-action="delete-material" data-material-id="${escapeHTML(material.id)}" ${canTransact ? "" : "disabled"}>Xóa vĩnh viễn</button>
           </div>
         </td>
+      </tr>
+    `).join("");
 
-        <td>
-          ${material.stock}
-          ${escapeHTML(material.unit)}
-        </td>
-
-        <td>
-          ${material.minimum}
-          ${escapeHTML(material.unit)}
-        </td>
-
-        <td>
-          ${pill(
-            material.stock < material.minimum
-              ? "Sắp hết"
-              : "Đủ hàng",
-
-            material.stock < material.minimum
-              ? "red"
-              : "green"
-          )}
-        </td>
-
-        <td>
-          ${canManageStock()
-            ? `<button
-                 type="button"
-                 class="btn small"
-                 data-stock="${escapeHTML(material.id)}">
-                 Nhập / xuất
-               </button>`
-            : "Chỉ xem"}
-        </td>
-
+    const historyRows = (inventory.history ?? []).map(transaction => `
+      <tr>
+        <td>${escapeHTML(new Date(transaction.transaction_date).toLocaleString("vi-VN"))}</td>
+        <td>${escapeHTML(transaction.material_name)} <span class="muted">${escapeHTML(transaction.material_id)}</span></td>
+        <td>${transaction.transaction_type === "IN" ? pill("Nhập kho", "green") : pill("Xuất kho", "red")}</td>
+        <td>${escapeHTML(transaction.quantity)} ${escapeHTML(transaction.unit)}</td>
+        <td>${escapeHTML(transaction.performed_by || "—")}</td>
+        <td>${escapeHTML(transaction.note || "—")}</td>
       </tr>
     `).join("");
 
     return heading(
       "Quản lý kho",
       "Theo dõi số lượng nguyên liệu nhập, xuất và tồn",
-      isManager()
-        ? button(
-            "➕ Thêm nguyên liệu",
-            "add-material",
-            "primary"
-          )
-        : ""
+      button("Tải lại", "reload-inventory") + button("➕ Thêm nguyên liệu", "add-material", "primary")
     ) + `
-
-      ${low.length
-        ? `<div class="notice">
-             ⚠ Có ${low.length} nguyên liệu sắp hết:
-             ${low.map(item =>
-               escapeHTML(item.name)
-             ).join(", ")}
-           </div>`
-        : ""}
-
+      ${inventory.loading ? '<p role="status">Đang tải dữ liệu kho…</p>' : ""}
+      ${inventory.errors.materials ? `<p role="alert">${escapeHTML(inventory.errors.materials)}</p>` : ""}
+      ${!inventory.errors.materials && low.length ? `
+        <div class="notice">⚠ Có ${low.length} nguyên liệu sắp hết: ${low.map(item => escapeHTML(item.name)).join(", ")}</div>
+      ` : ""}
       <div class="card">
-
+        <div class="actions" role="group" aria-label="Trạng thái nguyên liệu">
+          <button type="button" class="btn ${inventory.showInactive ? "" : "primary"}" data-action="show-active-materials" aria-pressed="${!inventory.showInactive}">Đang sử dụng</button>
+          <button type="button" class="btn ${inventory.showInactive ? "primary" : ""}" data-action="show-inactive-materials" aria-pressed="${inventory.showInactive}">Đã ngừng sử dụng</button>
+        </div>
         <div class="table-wrap">
           <table>
-
-            <thead>
-              <tr>
-                <th>Nguyên liệu</th>
-                <th>Tồn hiện tại</th>
-                <th>Tồn tối thiểu</th>
-                <th>Trạng thái</th>
-                <th>Thao tác</th>
-              </tr>
-            </thead>
-
-            <tbody>${rows}</tbody>
-
+            <thead><tr>
+              <th>Nguyên liệu</th><th>Tồn hiện tại</th><th>Tồn tối thiểu</th><th>Trạng thái</th><th>Thao tác</th>
+            </tr></thead>
+            <tbody>${rows || (inventory.materials ? `<tr><td colspan="5">${inventory.showInactive ? "Chưa có nguyên liệu đã ngừng sử dụng." : "Chưa có nguyên liệu đang sử dụng."}</td></tr>` : "")}</tbody>
           </table>
         </div>
-
+      </div>
+      <div class="card">
+        <h2>Lịch sử nhập/xuất kho</h2>
+        ${inventory.errors.history ? `<p role="alert">${escapeHTML(inventory.errors.history)}</p>` : ""}
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Thời gian</th><th>Nguyên liệu</th><th>Loại giao dịch</th><th>Số lượng</th><th>Người thực hiện</th><th>Ghi chú</th>
+            </tr></thead>
+            <tbody>${historyRows || (inventory.history ? '<tr><td colspan="6">Chưa có giao dịch nhập/xuất.</td></tr>' : "")}</tbody>
+          </table>
+        </div>
       </div>
     `;
+  }
+
+  async function submitInventoryForm(form, path, data, successMessage) {
+    await saveInventoryChange(form.querySelector('[type="submit"]'), path, "POST", data, successMessage, state.modal);
+  }
+
+  async function saveInventoryChange(control, path, method, data, successMessage, modal = null) {
+    if (!canManageStock() || inventory.loading || inventory.busy || control.disabled) return;
+    const current = inventory;
+    current.busy = true;
+    control.disabled = true;
+
+    try {
+      const result = await apiRequest(path, method, data);
+      if (inventory !== current) return;
+      if (state.modal === modal) state.modal = null;
+      current.busy = false;
+      await loadInventoryFromSQL();
+      if (inventory !== current) return;
+
+      const refreshFailed = Object.keys(current.errors).length > 0;
+      const message = result?.restored ? "Đã khôi phục nguyên liệu." : successMessage;
+      notify(refreshFailed ? `${message} Bấm Tải lại để cập nhật dữ liệu kho.` : message);
+    } catch (error) {
+      if (inventory === current) notify(error.message, true);
+    } finally {
+      current.busy = false;
+      control.disabled = false;
+    }
+  }
+
+  async function changeMaterialStatus(control, action) {
+    if (!canManageStock() || inventory.loading || inventory.busy || inventory.errors.materials) return;
+    const material = inventory.materials?.find(item => item.id === control.dataset.materialId);
+    if (!material) return;
+
+    const path = `/inventory/ingredients/${encodeURIComponent(material.id)}`;
+    if (action === "delete-material") {
+      if (!confirm(`Xóa vĩnh viễn ${material.name} (${material.id})? Bạn sẽ không thể khôi phục nguyên liệu này.`)) return;
+      await saveInventoryChange(control, path, "DELETE", null, "Đã xóa nguyên liệu.");
+      return;
+    }
+
+    const deactivate = action === "deactivate-material";
+    if (deactivate && !confirm(`Ngừng sử dụng ${material.name} (${material.id})?`)) return;
+    const operation = deactivate ? "deactivate" : "restore";
+    const message = deactivate ? "Đã ngừng sử dụng nguyên liệu." : "Đã khôi phục nguyên liệu.";
+    await saveInventoryChange(control, `${path}/${operation}`, "PATCH", null, message);
   }
 
   // =====================================================
@@ -3320,7 +3388,7 @@ ${modal.id && isAdmin() ? `
 
     // NHAP / XUAT KHO
     else if (modal.type === "stock") {
-      const material = db.materials.find(
+      const material = inventory.materials?.find(
         item => item.id === modal.id
       );
 
@@ -3355,9 +3423,13 @@ ${modal.id && isAdmin() ? `
             <input
               name="quantity"
               type="number"
-              min="0.01"
-              step="0.01"
+              min="0.0001"
+              step="0.0001"
               required>
+          </div>
+
+          <div class="field">
+            <label>Ghi chú <input name="note" maxlength="255"></label>
           </div>
 
           ${formButtons("Ghi nhận giao dịch")}
@@ -3375,7 +3447,7 @@ ${modal.id && isAdmin() ? `
 
           <div class="field">
             <label>Tên nguyên liệu</label>
-            <input name="name" required>
+            <input name="name" maxlength="100" required>
           </div>
 
           <div class="field">
@@ -3383,6 +3455,7 @@ ${modal.id && isAdmin() ? `
 
             <input
               name="unit"
+              maxlength="30"
               required
               placeholder="kg, lít, cái...">
           </div>
@@ -3394,7 +3467,7 @@ ${modal.id && isAdmin() ? `
               name="stock"
               type="number"
               min="0"
-              step="0.01"
+              step="0.0001"
               value="0"
               required>
           </div>
@@ -3406,7 +3479,7 @@ ${modal.id && isAdmin() ? `
               name="minimum"
               type="number"
               min="0"
-              step="0.01"
+              step="0.0001"
               value="1"
               required>
           </div>
@@ -3916,6 +3989,7 @@ if (target.dataset.resumeProduct !== undefined) {
 
     // NHAP XUAT KHO
     if (target.dataset.stock) {
+      if (inventory.loading || inventory.busy || inventory.errors.materials) return;
       if (!canManageStock()) {
         notify(
           "Không có quyền quản lý kho.",
@@ -4046,8 +4120,28 @@ case "save-order":
   }
   break;
 
+      case "show-active-materials":
+      case "show-inactive-materials":
+        inventory.showInactive = target.dataset.action === "show-inactive-materials";
+        render();
+        break;
+
+      case "deactivate-material":
+      case "restore-material":
+      case "delete-material":
+        await changeMaterialStatus(target, target.dataset.action);
+        break;
+
+      case "reload-inventory":
+        if (canManageStock() && !state.modal && !inventory.busy && !inventory.loading) {
+          const loading = loadInventoryFromSQL();
+          render();
+          await loading;
+        }
+        break;
+
       case "add-material":
-        if (checkManager()) {
+        if (canManageStock() && !inventory.loading && !inventory.busy) {
           openModal("material");
         }
         break;
@@ -4847,108 +4941,43 @@ const payload = {
 
     // NHAP / XUAT KHO
     if (form.id === "stockForm") {
-      if (!canManageStock()) {
-        notify("Không có quyền quản lý kho.", true);
-        return;
-      }
-
-      const material = db.materials.find(
-        item => item.id === state.modal?.id
-      );
-
+      const material = inventory.materials?.find(item => item.id === state.modal?.id);
       const quantity = Number(values.quantity);
+      const type = String(values.operation).toUpperCase();
 
-      if (
-        !material ||
-        !Number.isFinite(quantity) ||
-        quantity <= 0
-      ) {
-        notify("Số lượng không hợp lệ.", true);
+      if (!material || !Number.isFinite(quantity) || quantity <= 0 || !["IN", "OUT"].includes(type)) {
+        notify("Thông tin giao dịch kho không hợp lệ.", true);
         return;
       }
 
-      if (
-        values.operation !== "in" &&
-        values.operation !== "out"
-      ) {
-        notify("Thao tác kho không hợp lệ.", true);
-        return;
-      }
-
-      if (
-        values.operation === "out" &&
-        quantity > material.stock
-      ) {
-        notify(
-          "Không thể xuất quá số lượng tồn kho.",
-          true
-        );
-        return;
-      }
-
-      if (values.operation === "in") {
-        material.stock += quantity;
-      } else {
-        material.stock -= quantity;
-      }
-
-      material.stock =
-        Math.round(material.stock * 100) / 100;
-
-      db.transactions.push({
-        id: createId("KHO"),
-        materialId: material.id,
-        operation: values.operation,
+      await submitInventoryForm(form, "/inventory/transactions", {
+        material_id: material.id,
+        transaction_type: type,
         quantity,
-        date: now(),
-        userId
-      });
-
-      saveDatabase();
-      state.modal = null;
-      render();
-
-      notify("Cập nhật kho thành công.");
+        note: String(values.note ?? "").trim()
+      }, type === "IN" ? "Đã nhập kho." : "Đã xuất kho.");
       return;
     }
 
     // THEM NGUYEN LIEU
     if (form.id === "materialForm") {
-      if (!checkManager()) return;
-
-      const name = String(values.name || "").trim();
-      const unit = String(values.unit || "").trim();
-      const stock = Number(values.stock);
+      const materialName = String(values.name ?? "").trim();
+      const unit = String(values.unit ?? "").trim();
+      const quantity = Number(values.stock);
       const minimum = Number(values.minimum);
 
-      if (
-        !name ||
-        !unit ||
-        !Number.isFinite(stock) ||
-        !Number.isFinite(minimum) ||
-        stock < 0 ||
-        minimum < 0
-      ) {
-        notify(
-          "Thông tin nguyên liệu không hợp lệ.",
-          true
-        );
+      if (!materialName || !unit || values.stock === "" || values.minimum === "" ||
+          !Number.isFinite(quantity) || !Number.isFinite(minimum) || quantity < 0 || minimum < 0) {
+        notify("Thông tin nguyên liệu không hợp lệ.", true);
         return;
       }
 
-      db.materials.push({
-        id: createId("NL"),
-        name,
+      await submitInventoryForm(form, "/inventory/ingredients", {
+        material_name: materialName,
         unit,
-        stock,
-        minimum
-      });
-
-      saveDatabase();
-      state.modal = null;
-      render();
-
-      notify("Đã thêm nguyên liệu.");
+        quantity,
+        min_quantity: minimum
+      }, "Đã thêm nguyên liệu.");
       return;
     }
 

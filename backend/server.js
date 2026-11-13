@@ -9,6 +9,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const tableRoutes = require("./routes/tableRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const authRoutes = require("./routes/authRoutes");
+const inventoryRoutes = require("./routes/inventoryRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
@@ -19,6 +20,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
+app.use("/api/inventory", authMiddleware, inventoryRoutes);
 app.use("/api/accounts", accountRoutes);
 app.use("/api/products", authMiddleware, productRoutes);
 app.use("/api/categories", authMiddleware, categoryRoutes);
