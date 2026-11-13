@@ -655,6 +655,20 @@ async function resumeProductInSQL(id) {
   }
 
   
+  function canManageProducts() {
+    return isManager() || currentUser()?.originalRole === "product_manager";
+  }
+
+  function canDeleteProducts() {
+    return isAdmin() || currentUser()?.originalRole === "product_manager";
+  }
+
+  function checkProductManagement() {
+    if (canManageProducts()) return true;
+    notify("Bạn không có quyền quản lý sản phẩm.", true);
+    return false;
+  }
+
   function hasPermission(page) {
     const account = currentUser();
 
@@ -1487,7 +1501,7 @@ const available = db.tables.filter(
         ${content}
       </div>
 
-      ${isAdmin() ? tableOperations() : ""}
+      ${canManageOrders() ? tableOperations() : ""}
     `;
   }
 
@@ -1600,7 +1614,10 @@ async function updateTableStatus(tableId, status) {
 }
 
 async function performTableAction(mode) {
-    if (!checkTableAdmin()) return;
+    if (!canManageOrders()) {
+      notify("Bạn không có quyền chuyển hoặc gộp bàn.", true);
+      return;
+    }
 
     const sourceId =
       document.getElementById("sourceTable")?.value;
@@ -2066,7 +2083,7 @@ ${button(
       </td>
 
       <td>
-  ${isManager() ? `
+  ${canManageProducts() ? `
     <button
       type="button"
       class="btn small"
@@ -2101,7 +2118,7 @@ ${button(
   return heading(
     "Quản lý thực đơn",
     `${db.products.length} sản phẩm trong hệ thống`,
-    isManager()
+    canManageProducts()
       ? button("➕ Thêm món", "add-product", "primary")
       : ""
   ) + `
@@ -3350,7 +3367,7 @@ if (modal.type === "product") {
 </div>
 
           <div class="modal-actions">
-  ${modal.id && isAdmin() ? `
+  ${modal.id && canDeleteProducts() ? `
     <button type="button" class="btn product-delete-button"
       data-product-delete-open>
       Xóa món
@@ -3365,7 +3382,7 @@ if (modal.type === "product") {
   </button>
 </div>
 
-${modal.id && isAdmin() ? `
+${modal.id && canDeleteProducts() ? `
   <dialog class="product-delete-dialog" aria-labelledby="product-delete-title">
     <h2 id="product-delete-title">Xác nhận xóa món</h2>
     <p>Bạn có chắc muốn xóa món <strong>${escapeHTML(product.name)}</strong>?</p>
@@ -3672,7 +3689,7 @@ if (deleteControl) {
   const dialog = deleteControl.closest("#productForm")
     ?.querySelector(".product-delete-dialog");
 
-  if (!dialog || !isAdmin()) return;
+  if (!dialog || !canDeleteProducts()) return;
 
   if (deleteControl.hasAttribute("data-product-delete-open")) {
     dialog.showModal();
@@ -3920,7 +3937,7 @@ const product = db.products.find(
     // CHINH SUA SAN PHAM
     // ==========================================
     if (target.dataset.editProduct) {
-      if (!checkManager()) return;
+      if (!checkProductManagement()) return;
 
       await openProductModal(
         target.dataset.editProduct
@@ -3933,7 +3950,7 @@ const product = db.products.find(
     // NGUNG BAN SAN PHAM
     // ==========================================
   if (target.dataset.stopProduct !== undefined) {
-       if (!checkManager()) return;
+       if (!checkProductManagement()) return;
 
   const id = target.dataset.stopProduct;
 
@@ -3961,7 +3978,7 @@ const product = db.products.find(
 
 // MO BAN TRO LAI
 if (target.dataset.resumeProduct !== undefined) {
-  if (!checkManager()) return;
+  if (!checkProductManagement()) return;
 
   const id = target.dataset.resumeProduct;
 
@@ -4115,7 +4132,7 @@ case "save-order":
         break;
 
      case "add-product":
-  if (checkManager()) {
+  if (checkProductManagement()) {
      await openProductModal();
   }
   break;
@@ -4870,7 +4887,7 @@ app.addEventListener("change", async event => {
     // -----------------------------------------
 
     if (form.id === "productForm") {
-      if (!checkManager()) return;
+      if (!checkProductManagement()) return;
 
       const id = state.modal?.id || null;
       const productId = String(

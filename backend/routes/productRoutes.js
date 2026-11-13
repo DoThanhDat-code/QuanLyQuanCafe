@@ -1,39 +1,37 @@
 
 const express = require("express");
 const { sql, connectDB } = require("../config/db");
-const requireAdmin = require("../middleware/requireAdmin");
 const router = express.Router();
 
 // ============================================
 // KIEM TRA QUYEN QUAN LY SAN PHAM
 // ============================================
 
-function requireManager(req, res, next) {
-  if (!req.user) {
-    return res.status(401).json({
-      error: "Vui lòng đăng nhập"
-    });
-  }
+function requireProductRole(allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        error: "Vui lòng đăng nhập"
+      });
+    }
 
-  const role = String(req.user.role || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
+    const role = String(req.user.role || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
 
-  const allowedRoles = [
-    "admin",
-    "manager",
-    "product_manager"
-  ];
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({
+        error: "Bạn không có quyền quản lý sản phẩm"
+      });
+    }
 
-  if (!allowedRoles.includes(role)) {
-    return res.status(403).json({
-      error: "Bạn không có quyền quản lý sản phẩm"
-    });
-  }
-
-  next();
+    next();
+  };
 }
+
+const requireManager = requireProductRole(["admin", "manager", "product_manager"]);
+const requireProductDelete = requireProductRole(["admin", "product_manager"]);
 
 // ============================================
 // CAC TRUONG DU LIEU SAN PHAM
@@ -729,7 +727,7 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireAdmin,
+  requireProductDelete,
   async (req, res) => {
     try {
       const id = String(req.params.id || "").trim();
