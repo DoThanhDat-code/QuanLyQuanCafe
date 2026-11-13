@@ -1058,7 +1058,25 @@ router.patch("/:id/cancel", async (req, res) => {
 
         await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
         transactionStarted = true;
+await new sql.Request(transaction)
+    .input("orderId", sql.VarChar(20), orderId.trim())
+    .query(`
+        UPDATE t
+        SET status = 'available'
+        FROM dbo.[tables] AS t
+        JOIN dbo.table_order_links AS l ON l.table_id = t.table_id
+        WHERE l.order_id = @orderId
+          AND t.status = 'occupied'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM dbo.orders AS o
+              WHERE o.table_id = t.table_id
+                AND o.status IN ('pending', 'serving')
+          );
 
+        DELETE FROM dbo.table_order_links
+        WHERE order_id = @orderId;
+    `);
         const tableResult = await new sql.Request(transaction)
             .input("tableId", sql.VarChar(10), initialOrder.table_id)
             .query(`
@@ -1388,7 +1406,25 @@ router.patch("/:id/pay", async (req, res) => {
                       AND status = 'occupied'
                 `);
         }
+await new sql.Request(transaction)
+    .input("orderId", sql.VarChar(20), orderId.trim())
+    .query(`
+        UPDATE t
+        SET status = 'available'
+        FROM dbo.[tables] AS t
+        JOIN dbo.table_order_links AS l ON l.table_id = t.table_id
+        WHERE l.order_id = @orderId
+          AND t.status = 'occupied'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM dbo.orders AS o
+              WHERE o.table_id = t.table_id
+                AND o.status IN ('pending', 'serving')
+          );
 
+        DELETE FROM dbo.table_order_links
+        WHERE order_id = @orderId;
+    `);
         const tableAfterResult = await new sql.Request(transaction)
             .input("tableId", sql.VarChar(10), order.table_id)
             .query(`

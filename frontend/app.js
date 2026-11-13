@@ -303,6 +303,8 @@ function isAdmin() {
     page: "dashboard",
     tableId: "B01",
     cart: [],
+    cartOrder: null,
+    savingOrder: false,
     category: "Tất cả",
     period: "week",
     modal: null
@@ -543,54 +545,53 @@ if (response.status === 204) return null;
   async function loadTablesFromSQL() {
     const token = sessionStorage.getItem(TOKEN_KEY);
     const allowedRoles = ["admin", "waiter", "phucvu", "cashier", "thungan"];
-
-    if (!token || !allowedRoles.includes(currentUser()?.originalRole)) return;
+    if (!token || !allowedRoles.includes(currentUser()?.originalRole)) return false;
 
     try {
-      const response = await fetch(`${API_URL}/tables`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const [tables, orders] = await Promise.all([
+        apiRequest("/tables"),
+        apiRequest("/tables/active-orders")
+      ]);
 
-      if (!response.ok) {
-        throw new Error("Không thể tải danh sách bàn.");
+      if (sessionStorage.getItem(TOKEN_KEY) !== token) return false;
+      if (!Array.isArray(tables) || !Array.isArray(orders)) {
+        throw new Error("Dữ liệu bàn và đơn hàng không hợp lệ.");
       }
 
-      const tables = await response.json();
-      if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+      db.tables = tables.filter(table => Boolean(table.is_active)).map(table => ({
+        id: table.table_id,
+        name: table.table_name,
+        seats: Number(table.seats),
+        status: table.status,
+        active: true
+      }));
+      db.orders = db.orders.filter(order => order.status !== "open").concat(
+        orders.map(order => ({
+          id: order.order_id,
+          tableId: order.table_id,
+          status: "open",
+          items: order.items.map(item => ({
+            productId: item.productId,
+            qty: Number(item.qty),
+            price: Number(item.price)
+          })),
+          linkedTableIds: order.linkedTableIds || [],
+          createdAt: order.order_date
+        }))
+      );
 
-      if (!Array.isArray(tables)) {
-        throw new Error("Dữ liệu bàn không hợp lệ.");
-      }
-
-      db.tables = tables
-        .filter(table => Boolean(table.is_active))
-        .map(table => ({
-          id: table.table_id,
-          name: table.table_name,
-          seats: Number(table.seats),
-          status: table.status,
-          active: true
-        }));
-
-      if (
-        db.tables.length > 0 &&
-        !db.tables.some(table => table.id === state.tableId)
-      ) {
-        state.tableId = db.tables[0].id;
-        loadCart();
+      if (!db.tables.some(table => table.id === state.tableId)) {
+        state.tableId = db.tables[0]?.id ?? null;
+        state.cart = [];
+        state.cartOrder = null;
       }
 
       render();
-
-      console.log(
-        "Đã tải",
-        db.tables.length,
-        "bàn từ SQL Server"
-      );
-
+      return true;
     } catch (error) {
-      console.error("Loi tai ban:", error);
-      console.warn("Tam su dung danh sach ban demo.");
+      console.error("Lỗi đồng bộ bàn và đơn:", error);
+      notify(error.message || "Không thể tải bàn và đơn hàng.", true);
+      return false;
     }
   }
 
@@ -720,7 +721,7 @@ async function resumeProductInSQL(id) {
 
   function getOpenOrder(tableId) {
     return db.orders.find(order =>
-      order.tableId === tableId &&
+      (order.tableId === tableId || order.linkedTableIds?.includes(tableId)) &&
       order.status === "open"
     );
   }
@@ -733,88 +734,56 @@ async function resumeProductInSQL(id) {
     );
   }
 
-async function loadOrdersFromSQL() {
+  async function loadCartFromSQL() {
+    const tableId = state.tableId;
     const token = sessionStorage.getItem(TOKEN_KEY);
-
-    if (!token) {
-        throw new Error("Vui lòng đăng nhập lại.");
+    const order = getOpenOrder(tableId);
+    if (!order) {
+      state.cart = [];
+      state.cartOrder = null;
+      return;
     }
 
-    const response = await fetch(`${API_URL}/orders`, {
-        headers: {
-            Authorization: `Bearer ${token}`
-        }
-    });
-
-    if (!response.ok) {
-        throw new Error(
-            `Không thể tải đơn hàng (${response.status})`
-        );
-    }
-
-    const orders = await response.json();
-
-    if (!Array.isArray(orders)) {
-        throw new Error("Dữ liệu đơn hàng không hợp lệ.");
-    }
-
-    return orders;
-}
-
-async function loadCartFromSQL() {
-    const token = sessionStorage.getItem(TOKEN_KEY);
-
-    if (!token) {
-        throw new Error("Vui lòng đăng nhập lại.");
-    }
-
-    const orders = await loadOrdersFromSQL();
-
-    const currentOrder = orders.find(order =>
-        order.table_id === state.tableId &&
-        ["pending", "serving"].includes(order.status)
-    );
-
-    if (!currentOrder) {
-        state.cart = [];
-        return;
-    }
-
-    const response = await fetch(
-        `${API_URL}/orders/${encodeURIComponent(currentOrder.order_id)}`,
-        {
-            headers: {
-                Authorization: `Bearer ${token}`
-            }
-        }
-    );
-
-    if (!response.ok) {
-        throw new Error(
-            `Không thể tải chi tiết đơn (${response.status})`
-        );
-    }
-
-    const result = await response.json();
-
-    if (!Array.isArray(result.items)) {
-        throw new Error("Danh sách món không hợp lệ.");
+    const result = await apiRequest(`/orders/${encodeURIComponent(order.id)}`);
+    if (state.tableId !== tableId || sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    if (!result.order || !Array.isArray(result.items)) {
+      throw new Error("Chi tiết đơn hàng không hợp lệ.");
     }
 
     state.cart = result.items.map(item => ({
-    detailId: item.order_detail_id,
-    productId: item.product_id,
-    qty: Number(item.quantity),
-    price: Number(item.unit_price)
-}));
-}
+      detailId: item.order_detail_id,
+      productId: item.product_id,
+      qty: Number(item.quantity),
+      price: Number(item.unit_price)
+    }));
+    state.cartOrder = {
+      id: order.id,
+      items: new Map(state.cart.map(item => [item.detailId, item.qty]))
+    };
+  }
 
-  function loadCart() {
-    const order = getOpenOrder(state.tableId);
+  async function selectOrderTable(tableId) {
+    if (state.savingOrder || !checkOrderPermission()) return;
+    const table = db.tables.find(item => item.id === tableId);
+    if (!table || ["reserved", "maintenance"].includes(table.status)) {
+      notify("Bàn đã đặt trước, đang bảo trì hoặc không còn hoạt động.", true);
+      render();
+      return;
+    }
 
-    state.cart = order
-      ? order.items.map(item => ({ ...item }))
-      : [];
+    const previousTable = state.tableId;
+    state.tableId = tableId;
+    try {
+      await loadCartFromSQL();
+      if (state.tableId !== tableId) return;
+      state.page = "sale";
+      render();
+    } catch (error) {
+      if (state.tableId !== tableId) return;
+      state.tableId = previousTable;
+      notify(error.message, true);
+      render();
+    }
   }
 
   function changePage(page) {
@@ -847,6 +816,12 @@ if (page === "accounts" && isAdmin()) {
     }
 
     return true;
+  }
+
+  function checkTableAdmin() {
+    if (isAdmin()) return true;
+    notify("Chức năng quản lý bàn chỉ dành cho Admin.", true);
+    return false;
   }
 
   function checkOrderPermission() {
@@ -1458,7 +1433,6 @@ const available = db.tables.filter(
 
           <div class="split">
             <b>${escapeHTML(table.id)}</b>
-            <span>🪑 ${table.seats} chỗ</span>
           </div>
 
           <div class="muted">
@@ -1467,6 +1441,8 @@ const available = db.tables.filter(
 
           <div class="bottom">
             ${pill(statusText, statusColor)}
+             ${order?.linkedTableIds?.includes(table.id) ? `<small>Ghép với ${escapeHTML(order.tableId)}</small>` : ""}
+             ${order?.tableId === table.id && order?.linkedTableIds?.length ? `<small>Bàn chính · Ghép với ${escapeHTML(order.linkedTableIds.join(", "))}</small>` : ""}
           </div>
 
           ${order
@@ -1526,7 +1502,7 @@ const available = db.tables.filter(
         ${content}
       </div>
 
-      ${tableOperations()}
+      ${isAdmin() ? tableOperations() : ""}
     `;
   }
 
@@ -1563,7 +1539,7 @@ const available = db.tables.filter(
         <h2>🔄 Chuyển bàn và gộp bàn</h2>
 
         <p class="muted">
-          Chuyển khách sang bàn khác hoặc gộp hai đơn hàng.
+          Chuyển khách sang bàn trống hoặc gộp hóa đơn hai bàn đang phục vụ.
         </p>
 
         <div class="grid two">
@@ -1606,8 +1582,8 @@ const available = db.tables.filter(
         </div>
 
         <p class="muted" style="margin-top:15px">
-          Chuyển bàn yêu cầu bàn đích còn trống.
-          Gộp bàn yêu cầu cả hai bàn có đơn hàng.
+          Chuyển bàn giải phóng bàn nguồn. Nếu bàn đích đã có đơn, các món được chuyển vào đơn đích.
+          Gộp bàn: hai bàn đang phục vụ; toàn bộ món chuyển vào hóa đơn bàn đích, bàn nguồn vẫn phục vụ và gọi thêm món vào hóa đơn chung.
         </p>
 
       </div>
@@ -1620,7 +1596,8 @@ async function updateTableStatus(tableId, status) {
     {
       method: "PATCH",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
       },
       body: JSON.stringify({ status })
     }
@@ -1638,7 +1615,7 @@ async function updateTableStatus(tableId, status) {
 }
 
 async function performTableAction(mode) {
-    if (!checkOrderPermission()) return;
+    if (!checkTableAdmin()) return;
 
     const sourceId =
       document.getElementById("sourceTable")?.value;
@@ -1656,6 +1633,8 @@ async function performTableAction(mode) {
       return;
     }
 
+    // Dong bo truoc khi kiem tra, tranh dung don hang cu trong localStorage.
+    if (!(await loadTablesFromSQL())) return;
     const source = getOpenOrder(sourceId);
     const destination = getOpenOrder(destinationId);
 
@@ -1665,122 +1644,77 @@ async function performTableAction(mode) {
     }
 
 
+
 if (mode === "transfer") {
-  if (destination) {
-    notify(
-      "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
-      true
-    );
+  if (source.tableId !== sourceId) {
+    notify("Ban nguon dang ghep voi ban khac, khong the chuyen.", true);
     return;
   }
-
-  const targetTable = db.tables.find(
-    table => table.id === destinationId
-  );
-
-  if (!targetTable || targetTable.status !== "available") {
-    notify("Bàn đích không ở trạng thái bàn trống.", true);
+  const targetTable = db.tables.find(table => table.id === destinationId);
+  if (!targetTable || ["reserved", "maintenance"].includes(targetTable.status)) {
+    notify("Ban dich khong san sang de chuyen.", true);
     return;
   }
-
+  if (destination && destination.tableId !== destinationId) {
+    notify("Ban dich dang la ban phu cua nhom khac.", true);
+    return;
+  }
+  const message = destination
+    ? `Chuyen ${sourceId} sang ${destinationId}? Toan bo mon se gop vao hoa don ${destinationId}; ${sourceId} se thanh ban trong.`
+    : `Chuyen don tu ${sourceId} sang ${destinationId}? ${sourceId} se thanh ban trong.`;
+  if (!confirm(message)) return;
   try {
-    // Cập nhật trạng thái trong SQL Server
-    await updateTableStatus(destinationId, "occupied");
-
-    // Chuyển đơn hàng sang bàn đích
-    source.tableId = destinationId;
-    source.updatedAt = now();
-
-    // Giải phóng bàn nguồn nếu không còn đơn
-    if (!getOpenOrder(sourceId)) {
-      await updateTableStatus(sourceId, "available");
-    }
-
-    if (state.tableId === sourceId) {
-      state.tableId = destinationId;
-    }
-
-    loadCart();
-    saveDatabase();
-
+    const response = await fetch(`${API_URL}/tables/transfer-order`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+      },
+      body: JSON.stringify({ orderId: source.id, sourceId, destinationId })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Khong the chuyen ban.");
+    if (state.tableId === sourceId) state.tableId = destinationId;
     await loadTablesFromSQL();
-
-    notify(
-      `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
-    );
-
+    notify(`Da chuyen ${sourceId} sang ${destinationId}. ${sourceId} da trong.`);
   } catch (error) {
-    console.error("Lỗi chuyển bàn:", error);
-    notify(
-      error.message || "Không thể cập nhật trạng thái bàn.",
-      true
-    );
+    console.error("Loi chuyen ban:", error);
+    notify(error.message || "Khong the chuyen ban.", true);
+    await loadTablesFromSQL();
   }
-
   return;
 }
+
 if (mode === "merge") {
-      if (!destination) {
-        notify(
-          "Bàn đích chưa có đơn hàng để gộp.",
-          true
-        );
-        return;
-      }
-
-      for (const item of source.items) {
-        const existingItem = destination.items.find(
-          x =>
-            x.productId === item.productId &&
-            x.price === item.price
-        );
-
-        if (existingItem) {
-          existingItem.qty += item.qty;
-        } else {
-          destination.items.push({ ...item });
-        }
-      }
-
-      source.status = "merged";
-      source.mergedInto = destination.id;
-      source.mergedAt = now();
-
-      destination.updatedAt = now();
-            // Đồng bộ trạng thái bàn với SQL Server
-      try {
-        await updateTableStatus(destinationId, "occupied");
-
-        if (!getOpenOrder(sourceId)) {
-          await updateTableStatus(sourceId, "available");
-        }
-      } catch (error) {
-        console.error("Lỗi cập nhật trạng thái khi gộp bàn:", error);
-        saveDatabase();
-        await loadTablesFromSQL();
-        notify(
-          "Đơn đã gộp nhưng cập nhật trạng thái SQL thất bại: " +
-          error.message,
-          true
-        );
-        return;
-      }
-
-      if (
-        state.tableId === sourceId ||
-        state.tableId === destinationId
-      ) {
-        state.tableId = destinationId;
-        loadCart();
-      }
-
-      saveDatabase();
-      await loadTablesFromSQL();
-
-      notify(
-        `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
-      );
-    }
+  const target = db.tables.find(t => t.id === destinationId);
+  if (!destination || !target || target.status !== "occupied") {
+    notify("Bàn đích phải đang phục vụ và có đơn mở.", true);
+    return;
+  }
+  if (source.tableId !== sourceId || destination.tableId !== destinationId) {
+    notify("Hãy chọn hai bàn chính chưa được ghép vào bàn khác.", true);
+    return;
+  }
+  if (!confirm(`Gộp ${sourceId} vào ${destinationId}? Tất cả món sẽ tính chung tại ${destinationId}, nhưng cả hai bàn vẫn đang phục vụ.`)) return;
+  try {
+    const response = await fetch(`${API_URL}/tables/join-table`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+      },
+      body: JSON.stringify({ sourceId, destinationId, orderId: source.id, destinationOrderId: destination.id })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Không thể gộp bàn.");
+    await loadTablesFromSQL();
+    notify(`Đã gộp ${sourceId} vào ${destinationId}. Hai bàn vẫn phục vụ; thanh toán chung tại ${destinationId}.`);
+  } catch (error) {
+    notify(error.message || "Không thể gộp bàn.", true);
+    await loadTablesFromSQL();
+  }
+  return;
+}
   }
 
   // =====================================================
@@ -2003,135 +1937,108 @@ ${button(
   }
 
   
-async function saveOrder() {
-    if (!checkOrderPermission()) return false;
-
-    if (state.cart.length === 0) {
-        notify("Vui lòng thêm món trước khi lưu đơn.", true);
-        return false;
+  async function saveOrder() {
+    if (state.savingOrder || !checkOrderPermission()) return false;
+    if (!state.cart.length) {
+      notify("Đơn cần ít nhất một món. Để bỏ toàn bộ món, hãy hủy đơn.", true);
+      return false;
     }
 
-    const token = sessionStorage.getItem(TOKEN_KEY);
-
-    if (!token) {
-        notify("Vui lòng đăng nhập lại.", true);
-        return false;
-    }
-
-    const items = state.cart.map(item => ({
-        product_id: item.productId,
-        quantity: item.qty
-    }));
+    const tableId = state.tableId;
+    const cart = state.cart.map(item => ({ ...item }));
+    const loadedOrder = state.cartOrder;
+    let wroteToServer = false;
+    state.savingOrder = true;
 
     try {
-        // Kiểm tra đơn đang hoạt động trên SQL Server
-        const orders = await loadOrdersFromSQL();
+      if (!(await loadTablesFromSQL())) return false;
+      if (state.tableId !== tableId) return false;
 
-        const existingOrder = orders.find(order =>
-            order.table_id === state.tableId &&
-            ["pending", "serving"].includes(order.status)
-        );
-
-       if (existingOrder) {
-    if (existingOrder.status !== "pending") {
-        notify("Chỉ được sửa món khi đơn đang chờ phục vụ.", true);
-        return false;
-    }
-
-    const orderPath = `/orders/${encodeURIComponent(existingOrder.order_id)}`;
-    const savedOrder = await apiRequest(orderPath);
-    const savedItems = new Map(
-        savedOrder.items.map(item => [item.order_detail_id, item])
-    );
-    const cart = state.cart.map(item => ({ ...item }));
-    const retainedIds = new Set(cart.map(item => item.detailId));
-
-    const removedItems = savedOrder.items.filter(
-    item => !retainedIds.has(item.order_detail_id)
-);
-
-    const newItems = cart
-        .filter(item => item.detailId == null)
-        .map(item => ({
-            product_id: item.productId,
-            quantity: item.qty
-        }));
-
-    for (const item of cart) {
-        if (item.detailId == null) continue;
-
-        const savedItem = savedItems.get(item.detailId);
-        if (!savedItem) {
-            notify("Chi tiết đơn đã thay đổi. Hãy mở lại đơn trước khi lưu.", true);
-            return false;
-        }
-
-        if (item.qty === Number(savedItem.quantity)) continue;
-
-        await apiRequest(
-            `${orderPath}/items/${encodeURIComponent(item.detailId)}`,
-            "PATCH",
-            { quantity: item.qty }
-        );
-    }
-
-    if (newItems.length > 0) {
-        await apiRequest(`${orderPath}/items`, "POST", { items: newItems });
-    }
-for (const item of removedItems) {
-    await apiRequest(
-        `${orderPath}/items/${encodeURIComponent(item.order_detail_id)}`,
-        "DELETE"
-    );
-}
-    await loadCartFromSQL();
-    return true;
-}
-
-        // Tạo đơn mới
-        const response = await fetch(`${API_URL}/orders`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({
-                table_id: state.tableId,
-                items
-            })
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                result.error || "Không thể lưu đơn hàng."
-            );
-        }
-
-        // Cập nhật lại trạng thái bàn từ SQL Server
-        
-        await loadTablesFromSQL();
-
-        // Tải lại món của đơn vừa lưu từ SQL Server
+      const order = getOpenOrder(tableId);
+      if ((order?.id ?? null) !== (loadedOrder?.id ?? null)) {
         await loadCartFromSQL();
-
-        return true;
-
-
-    } catch (error) {
-        console.error("Lỗi lưu đơn:", error);
-        notify(error.message, true);
+        notify("Đơn của bàn đã thay đổi. Kiểm tra lại giỏ trước khi lưu.", true);
         return false;
-    }
-}
+      }
 
+      const newItems = cart.filter(item => item.detailId == null).map(item => ({
+        product_id: item.productId,
+        quantity: item.qty
+      }));
+
+      if (!order) {
+        await apiRequest("/orders", "POST", { table_id: tableId, items: newItems });
+        wroteToServer = true;
+      } else {
+        const orderPath = `/orders/${encodeURIComponent(order.id)}`;
+        const savedOrder = await apiRequest(orderPath);
+        if (savedOrder.order.status !== "pending") {
+          notify("Chỉ được sửa món khi đơn đang chờ phục vụ.", true);
+          return false;
+        }
+
+        const savedItems = new Map(savedOrder.items.map(item => [
+          item.order_detail_id, Number(item.quantity)
+        ]));
+        if (savedItems.size !== loadedOrder.items.size ||
+            [...savedItems].some(([id, qty]) => loadedOrder.items.get(id) !== qty)) {
+          await loadCartFromSQL();
+          notify("Chi tiết đơn đã thay đổi. Kiểm tra lại giỏ trước khi lưu.", true);
+          return false;
+        }
+
+        const retainedIds = new Set(cart.map(item => item.detailId));
+        for (const item of cart) {
+          if (item.detailId == null || savedItems.get(item.detailId) === item.qty) continue;
+          await apiRequest(`${orderPath}/items/${encodeURIComponent(item.detailId)}`, "PATCH", {
+            quantity: item.qty
+          });
+          wroteToServer = true;
+        }
+
+        if (newItems.length) {
+          await apiRequest(`${orderPath}/items`, "POST", { items: newItems });
+          wroteToServer = true;
+        }
+
+        for (const id of savedItems.keys()) {
+          if (retainedIds.has(id)) continue;
+          await apiRequest(`${orderPath}/items/${encodeURIComponent(id)}`, "DELETE");
+          wroteToServer = true;
+        }
+      }
+
+      if (!(await loadTablesFromSQL())) {
+        notify("Đã lưu lên SQL Server. Mở lại bàn để kiểm tra đơn.", true);
+        return false;
+      }
+
+      await loadCartFromSQL();
+      return true;
+    } catch (error) {
+      if (wroteToServer) {
+        try {
+          if (await loadTablesFromSQL()) await loadCartFromSQL();
+        } catch (reloadError) {
+          console.error("Lỗi tải lại đơn:", reloadError);
+        }
+      }
+      notify(
+        wroteToServer ? `Một phần đơn đã được lưu. ${error.message}` : error.message,
+        true
+      );
+      return false;
+    } finally {
+      state.savingOrder = false;
+      render();
+    }
+  }
 
   // =====================================================
   // 13. THANH TOAN
   // =====================================================
 
-  function checkout(method, discount) {
+async function checkout(method, discount) {
     if (!canPay()) {
       notify("Bạn không có quyền thanh toán.", true);
       return;
@@ -2151,7 +2058,7 @@ for (const item of removedItems) {
       return;
     }
 
-    if (!saveOrder()) return;
+if (!(await saveOrder())) return;
 
     const order = getOpenOrder(state.tableId);
 
@@ -2173,6 +2080,38 @@ for (const item of removedItems) {
     }
 
     const total = subtotal - discount;
+
+    // Thanh toán trong SQL Server trước khi cập nhật giao diện
+    try {
+      const response = await fetch(
+        `${API_URL}/tables/pay-order`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+          },
+          body: JSON.stringify({
+            orderId: order.id,
+            tableId: order.tableId
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Thanh toán SQL Server thất bại."
+        );
+      }
+
+    } catch (error) {
+      console.error("Lỗi thanh toán SQL Server:", error);
+      notify(error.message || "Không thể thanh toán.", true);
+      return;
+    }
+
 
     db.invoices.push({
       id: createId("HD"),
@@ -3009,15 +2948,8 @@ async function openProductModal(id = null) {
               required>
           </div>
 
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="4"
-              required>
-          </div>
+
+
 
           ${formButtons("Lưu bàn")}
         </form>
@@ -3039,8 +2971,10 @@ async function openProductModal(id = null) {
           <div class="field">
             <label>Mã bàn</label>
             <input
+              name="table_id"
+              maxlength="10"
               value="${escapeHTML(table.id)}"
-              disabled>
+              required>
           </div>
 
           <div class="field">
@@ -3052,15 +2986,8 @@ async function openProductModal(id = null) {
               required>
           </div>
 
-          <div class="field">
-            <label>Số ghế</label>
-            <input
-              name="seats"
-              type="number"
-              min="1"
-              value="${table.seats}"
-              required>
-          </div>
+
+
 
           ${formButtons("Lưu thay đổi")}
         </form>
@@ -3087,9 +3014,6 @@ async function openProductModal(id = null) {
                 Bàn trống
               </option>
 
-              <option value="occupied" ${table.status === "occupied" ? "selected" : ""}>
-                Đang phục vụ
-              </option>
 
               <option value="reserved" ${table.status === "reserved" ? "selected" : ""}>
                 Đã đặt trước
@@ -3593,7 +3517,7 @@ if (deleteControl) {
     );
 
     if (addTableButton) {
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       openModal("table");
       return;
@@ -3611,9 +3535,9 @@ if (deleteControl) {
 
     if (!target) return;
 
-    // XOA MEM BAN TRONG SQL SERVER
+    // XOA VINH VIEN BAN TRONG SQL SERVER
     if (target.dataset.deleteTable) {
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const tableId = target.dataset.deleteTable;
 
@@ -3645,7 +3569,8 @@ if (deleteControl) {
         const response = await fetch(
           `${API_URL}/tables/${encodeURIComponent(tableId)}`,
           {
-            method: "DELETE"
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}` }
           }
         );
 
@@ -3672,7 +3597,7 @@ if (deleteControl) {
 
     // MO POPUP DOI TRANG THAI BAN
     if (target.dataset.statusTable) {
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const table = db.tables.find(
         item => item.id === target.dataset.statusTable
@@ -3695,7 +3620,7 @@ if (deleteControl) {
 
     // MO POPUP SUA BAN
     if (target.dataset.editTable) {
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const table = db.tables.find(
         item => item.id === target.dataset.editTable
@@ -3724,22 +3649,8 @@ if (deleteControl) {
 
     // CHON BAN
     if (target.dataset.table) {
-      if (!checkOrderPermission()) return;
-
-      
-      state.tableId = target.dataset.table;
-
-      try {
-        await loadCartFromSQL();
-      } catch (error) {
-        console.error("Lỗi tải đơn hàng:", error);
-        notify(error.message, true);
-        return;
-}
-
-state.page = "sale";
-render();
-return;
+      await selectOrderTable(target.dataset.table);
+      return;
 
     }
 
@@ -3759,6 +3670,7 @@ return;
 
     // THEM MON VAO GIO
     if (target.dataset.prod) {
+      if (state.savingOrder) return;
       if (!checkOrderPermission()) return;
 
       
@@ -3795,6 +3707,7 @@ const product = db.products.find(
 
     // TANG GIAM SO LUONG
     if (target.dataset.qty !== undefined) {
+      if (state.savingOrder) return;
       if (!checkOrderPermission()) return;
 
       const index = Number(target.dataset.qty);
@@ -3944,6 +3857,7 @@ if (target.dataset.resumeProduct !== undefined) {
           state.page = "dashboard";
           state.modal = null;
           state.cart = [];
+          state.cartOrder = null;
 
           render();
           notify("Đã đăng xuất thành công!");
@@ -3956,29 +3870,18 @@ if (target.dataset.resumeProduct !== undefined) {
         break;
       }
 
-      case "new-order":
-        if (!checkOrderPermission()) return;
-
-        if (!db.tables.length) {
-          notify(
-            "Hệ thống chưa có bàn nào.",
-            true
-          );
+      case "new-order": {
+        if (!checkOrderPermission() || !(await loadTablesFromSQL())) return;
+        const table = db.tables.find(item => item.status === "available" && !getOpenOrder(item.id));
+        if (!table) {
+          notify("Không có bàn trống để tạo đơn mới.", true);
           return;
         }
 
-        state.tableId =
-          db.tables.find(
-            table => !getOpenOrder(table.id)
-          )?.id || db.tables[0].id;
-
-        loadCart();
-
-        state.page = "sale";
-        render();
+        await selectOrderTable(table.id);
         break;
+      }
 
-      
 case "save-order":
     if (await saveOrder()) {
         render();
@@ -4008,11 +3911,11 @@ case "save-order":
         break;
 
       case "transfer-table":
-        performTableAction("transfer");
+        await performTableAction("transfer");
         break;
 
       case "merge-table":
-        performTableAction("merge");
+        await performTableAction("merge");
         break;
 
      case "add-product":
@@ -4192,7 +4095,12 @@ case "refresh-accounts":
   }
 });
 
-app.addEventListener("change", event => {
+app.addEventListener("change", async event => {
+  if (event.target.id === "tableSelect") {
+    await selectOrderTable(event.target.value);
+    return;
+  }
+
   if (event.target.id === "menuCategory") {
     filterMenuProducts();
   }
@@ -4208,7 +4116,7 @@ app.addEventListener("change", event => {
     if (event.target.id === "statusTableForm") {
       event.preventDefault();
 
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const tableId = state.modal?.tableId;
 
@@ -4221,10 +4129,7 @@ app.addEventListener("change", event => {
       const status = String(formData.get("status") || "");
 
       const validStatuses = [
-        "available",
-        "occupied",
-        "reserved",
-        "maintenance"
+        "available", "reserved", "maintenance"
       ];
 
       if (!validStatuses.includes(status)) {
@@ -4238,7 +4143,8 @@ app.addEventListener("change", event => {
           {
             method: "PATCH",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
             },
             body: JSON.stringify({ status })
           }
@@ -4271,7 +4177,7 @@ app.addEventListener("change", event => {
     if (event.target.id === "editTableForm") {
       event.preventDefault();
 
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const tableId = state.modal?.tableId;
 
@@ -4282,13 +4188,18 @@ app.addEventListener("change", event => {
 
       const formData = new FormData(event.target);
 
+      const table_id = String(formData.get("table_id") || "").trim().toUpperCase();
+
       const table_name = String(
         formData.get("table_name") || ""
       ).trim();
 
-      const seats = Number(formData.get("seats"));
+      const currentTable = db.tables.find(item => item.id === tableId);
+      const seats = Number(currentTable?.seats) > 0 ? Number(currentTable.seats) : 4;
 
       if (
+        !table_id ||
+        table_id.length > 10 ||
         !table_name ||
         table_name.length > 100 ||
         !Number.isInteger(seats) ||
@@ -4304,9 +4215,11 @@ app.addEventListener("change", event => {
           {
             method: "PUT",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
             },
             body: JSON.stringify({
+              table_id,
               table_name,
               seats
             })
@@ -4340,7 +4253,7 @@ app.addEventListener("change", event => {
     if (event.target.id === "tableForm") {
       event.preventDefault();
 
-      if (!checkManager()) return;
+      if (!checkTableAdmin()) return;
 
       const form = event.target;
       const formData = new FormData(form);
@@ -4353,7 +4266,7 @@ app.addEventListener("change", event => {
         formData.get("table_name") || ""
       ).trim();
 
-      const seats = Number(formData.get("seats"));
+      const seats = 4; // Mặc định 4 ghế, không hiển thị trên giao diện.
 
       if (
         !table_id ||
@@ -4371,7 +4284,8 @@ app.addEventListener("change", event => {
         const response = await fetch(`${API_URL}/tables`, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
           },
           body: JSON.stringify({
             table_id,
