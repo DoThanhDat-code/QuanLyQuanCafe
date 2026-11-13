@@ -802,10 +802,11 @@ async function loadCartFromSQL() {
     }
 
     state.cart = result.items.map(item => ({
-        productId: item.product_id,
-        qty: Number(item.quantity),
-        price: Number(item.unit_price)
-    }));
+    detailId: item.order_detail_id,
+    productId: item.product_id,
+    qty: Number(item.quantity),
+    price: Number(item.unit_price)
+}));
 }
 
   function loadCart() {
@@ -2031,13 +2032,61 @@ async function saveOrder() {
             ["pending", "serving"].includes(order.status)
         );
 
-        if (existingOrder) {
-            notify(
-                "Bàn đã có đơn trên SQL Server. Chưa hỗ trợ lưu đè giỏ hàng; hãy dùng chức năng thêm món riêng.",
-                true
-            );
+       if (existingOrder) {
+    if (existingOrder.status !== "pending") {
+        notify("Chỉ được sửa món khi đơn đang chờ phục vụ.", true);
+        return false;
+    }
+
+    const orderPath = `/orders/${encodeURIComponent(existingOrder.order_id)}`;
+    const savedOrder = await apiRequest(orderPath);
+    const savedItems = new Map(
+        savedOrder.items.map(item => [item.order_detail_id, item])
+    );
+    const cart = state.cart.map(item => ({ ...item }));
+    const retainedIds = new Set(cart.map(item => item.detailId));
+
+    const removedItems = savedOrder.items.filter(
+    item => !retainedIds.has(item.order_detail_id)
+);
+
+    const newItems = cart
+        .filter(item => item.detailId == null)
+        .map(item => ({
+            product_id: item.productId,
+            quantity: item.qty
+        }));
+
+    for (const item of cart) {
+        if (item.detailId == null) continue;
+
+        const savedItem = savedItems.get(item.detailId);
+        if (!savedItem) {
+            notify("Chi tiết đơn đã thay đổi. Hãy mở lại đơn trước khi lưu.", true);
             return false;
         }
+
+        if (item.qty === Number(savedItem.quantity)) continue;
+
+        await apiRequest(
+            `${orderPath}/items/${encodeURIComponent(item.detailId)}`,
+            "PATCH",
+            { quantity: item.qty }
+        );
+    }
+
+    if (newItems.length > 0) {
+        await apiRequest(`${orderPath}/items`, "POST", { items: newItems });
+    }
+for (const item of removedItems) {
+    await apiRequest(
+        `${orderPath}/items/${encodeURIComponent(item.order_detail_id)}`,
+        "DELETE"
+    );
+}
+    await loadCartFromSQL();
+    return true;
+}
 
         // Tạo đơn mới
         const response = await fetch(`${API_URL}/orders`, {

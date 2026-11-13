@@ -7,6 +7,7 @@ const { connectDB } = require("./config/db");
 const productRoutes = require("./routes/productRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const tableRoutes = require("./routes/tableRoutes");
+const orderRoutes = require("./routes/orderRoutes");
 const authRoutes = require("./routes/authRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
@@ -21,6 +22,7 @@ app.use("/api/accounts", accountRoutes);
 app.use("/api/products", authMiddleware, productRoutes);
 app.use("/api/categories", authMiddleware, categoryRoutes);
 app.use("/api/tables", tableRoutes);
+app.use("/api/orders", authMiddleware, orderRoutes);
 
 app.get("/", (req, res) => {
     res.json({
