@@ -20,6 +20,16 @@ function requireTableRead(req, res, next) {
     return next();
 }
 
+function requireTableOrderManagement(req, res, next) {
+    if (!["admin", "waiter", "phucvu"].includes(req.user?.role)) {
+        return res.status(403).json({
+            error: "Bạn không có quyền chuyển hoặc gộp bàn."
+        });
+    }
+
+    return next();
+}
+
 // Lấy danh sách bàn, gồm bàn đang dùng chung đơn.
 router.get("/", requireTableRead, async (req, res) => {
     try {
@@ -416,7 +426,7 @@ router.get("/:id/current-order", requireTableRead, async (req, res) => {
 
 
 // Chuyen ban: ban dich trong -> doi ban; ban dich co don -> don mon vao dich.
-router.post("/transfer-order", requireAdmin, async (req, res) => {
+router.post("/transfer-order", requireTableOrderManagement, async (req, res) => {
   let tx;
   try {
     const { orderId, sourceId, destinationId } = req.body || {};
@@ -498,7 +508,7 @@ router.post("/transfer-order", requireAdmin, async (req, res) => {
 });
 
 // Gop hai ban DANG PHUC VU: giu don dich, ban nguon van phuc vu va goi mon vao don chung.
-router.post("/join-table", requireAdmin, async (req, res) => {
+router.post("/join-table", requireTableOrderManagement, async (req, res) => {
   let tx;
   try {
     const { sourceId, destinationId, orderId, destinationOrderId } = req.body || {};

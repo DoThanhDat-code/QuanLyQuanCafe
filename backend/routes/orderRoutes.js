@@ -8,20 +8,23 @@ const router = express.Router();
 const createOrderRoles = new Set([
     "admin",
     "manager",
-    "phucvu"
+    "phucvu",
+    "waiter"
 ]);
 
 const viewOrderRoles = new Set([
     "admin",
     "manager",
     "phucvu",
-    "thungan"
+    "thungan",
+    "waiter"
 ]);
 
 const addOrderItemRoles = new Set([
     "admin",
     "manager",
-    "phucvu"
+    "phucvu",
+    "waiter"
 ]);
 
 function createError(statusCode, message) {
@@ -1261,7 +1264,7 @@ router.patch("/:id/pay", async (req, res) => {
                   AND (
                       u.role = 'admin'
                       OR (
-                          u.role = 'phucvu'
+                          u.role IN ('phucvu', 'waiter')
                           AND e.is_active = 1
                       )
                   )
@@ -1271,7 +1274,7 @@ router.patch("/:id/pay", async (req, res) => {
 
         if (
             !user ||
-            !["admin", "phucvu"].includes(user.role)
+            !["admin", "phucvu", "waiter"].includes(user.role)
         ) {
             return res.status(403).json({
                 error: "Tài khoản không có quyền thanh toán đơn hàng"
