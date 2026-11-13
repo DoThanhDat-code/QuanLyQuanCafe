@@ -9,6 +9,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const tableRoutes = require("./routes/tableRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const authRoutes = require("./routes/authRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
 const accountRoutes = require("./routes/accountRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
 
@@ -23,6 +24,7 @@ app.use("/api/products", authMiddleware, productRoutes);
 app.use("/api/categories", authMiddleware, categoryRoutes);
 app.use("/api/tables", tableRoutes);
 app.use("/api/orders", authMiddleware, orderRoutes);
+app.use("/api/payments", paymentRoutes);
 
 app.get("/", (req, res) => {
     res.json({

@@ -2038,109 +2038,6 @@ ${button(
   // 13. THANH TOAN
   // =====================================================
 
-async function checkout(method, discount) {
-    if (!canPay()) {
-      notify("Bạn không có quyền thanh toán.", true);
-      return;
-    }
-
-    const subtotal = calculateTotal(state.cart);
-
-    if (
-      !Number.isFinite(discount) ||
-      discount < 0 ||
-      discount > subtotal
-    ) {
-      notify(
-        "Giá trị giảm giá không hợp lệ.",
-        true
-      );
-      return;
-    }
-
-if (!(await saveOrder())) return;
-
-    const order = getOpenOrder(state.tableId);
-
-    if (!order) {
-      notify("Không tìm thấy đơn hàng.", true);
-      return;
-    }
-
-    const duplicate = db.invoices.some(
-      invoice => invoice.orderId === order.id
-    );
-
-    if (duplicate) {
-      notify(
-        "Đơn hàng đã được thanh toán.",
-        true
-      );
-      return;
-    }
-
-    const total = subtotal - discount;
-
-    // Thanh toán trong SQL Server trước khi cập nhật giao diện
-    try {
-      const response = await fetch(
-        `${API_URL}/tables/pay-order`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
-          },
-          body: JSON.stringify({
-            orderId: order.id,
-            tableId: order.tableId
-          })
-        }
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          result.error || "Thanh toán SQL Server thất bại."
-        );
-      }
-
-    } catch (error) {
-      console.error("Lỗi thanh toán SQL Server:", error);
-      notify(error.message || "Không thể thanh toán.", true);
-      return;
-    }
-
-
-    db.invoices.push({
-      id: createId("HD"),
-      orderId: order.id,
-      tableId: state.tableId,
-      items: order.items.map(item => ({ ...item })),
-      subtotal,
-      discount,
-      total,
-      method,
-      date: now()
-    });
-
-    order.status = "paid";
-    order.paidAt = now();
-
-    saveDatabase();
-
-    state.cart = [];
-    state.modal = null;
-    state.page = "payments";
-
-    render();
-
-    notify(
-      "Thanh toán thành công! Bàn đã được giải phóng."
-    );
-  }
-
   // =====================================================
   // 14. QUAN LY THUC DON
   // =====================================================
@@ -2358,71 +2255,318 @@ function filterMenuProducts() {
       </div>
     `;
   }
+let sqlInvoices = [];
+let paymentsLoading = false;
+let paymentsLoaded = false;
+let paymentsError = "";
 
-  function paymentsPage() {
-    const invoices = [...db.invoices].sort(
-      (a, b) => new Date(b.date) - new Date(a.date)
-    );
+async function loadPaymentsFromSQL() {
+  if (paymentsLoading) return;
+  paymentsLoading = true;
+  paymentsError = "";
+  const token = sessionStorage.getItem(TOKEN_KEY);
 
-    const revenue = invoices.reduce(
-      (total, invoice) => total + invoice.total,
-      0
-    );
-
-    const cashCount = invoices.filter(
-      invoice => invoice.method === "Tiền mặt"
-    ).length;
-
-    const bankCount = invoices.filter(
-      invoice => invoice.method === "Chuyển khoản"
-    ).length;
-
-    return heading(
-      "Thanh toán & Hóa đơn",
-      "Danh sách các giao dịch đã hoàn tất",
-      canManageOrders()
-        ? button(
-            "🛒 Tạo đơn thanh toán",
-            "new-order",
-            "primary"
-          )
-        : ""
-    ) + `
-
-      <div class="grid stats">
-
-        ${statsCard(
-          "Tổng hóa đơn",
-          invoices.length,
-          "Giao dịch hoàn tất"
-        )}
-
-        ${statsCard(
-          "Tổng doanh thu",
-          money(revenue),
-          "Bao gồm dữ liệu mẫu"
-        )}
-
-        ${statsCard(
-          "Tiền mặt",
-          cashCount,
-          "Số hóa đơn"
-        )}
-
-        ${statsCard(
-          "Chuyển khoản",
-          bankCount,
-          "Số hóa đơn"
-        )}
-
-      </div>
-
-      <div class="card">
-        <h2>🧾 Lịch sử hóa đơn</h2>
-        ${invoiceTable(invoices)}
-      </div>
-    `;
+  try {
+    const data = await paymentAPI("");
+    if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    sqlInvoices = Array.isArray(data) ? data : [];
+    paymentsLoaded = true;
+  } catch (error) {
+    if (sessionStorage.getItem(TOKEN_KEY) === token) {
+      paymentsError = error.message;
+    }
+  } finally {
+    paymentsLoading = false;
   }
+}
+
+let paymentOrders = [];
+let paymentOrdersLoading = false;
+let paymentOrdersError = "";
+let paymentFormOpen = false;
+let paymentPreview = null;
+let paymentBusy = false;
+
+async function loadPaymentOrders() {
+  if (paymentOrdersLoading) return;
+  paymentOrdersLoading = true;
+  paymentOrdersError = "";
+  const token = sessionStorage.getItem(TOKEN_KEY);
+
+  try {
+    const data = await paymentAPI("/orders");
+    if (sessionStorage.getItem(TOKEN_KEY) === token) {
+      paymentOrders = Array.isArray(data) ? data : [];
+    }
+  } catch (error) {
+    if (sessionStorage.getItem(TOKEN_KEY) === token) {
+      paymentOrdersError = error.message;
+      paymentOrders = [];
+    }
+  } finally {
+    paymentOrdersLoading = false;
+    render();
+  }
+}
+
+function paymentAPI(path, body) {
+  return apiRequest(`/payments${path}`, body ? "POST" : "GET", body ?? null);
+}
+
+function paymentItems(data) {
+  return `<p>Đơn: ${escapeHTML(data.order_id)} · Bàn: ${escapeHTML(data.table_name)}</p><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${data.items.map(x=>`<tr><td>${escapeHTML(x.product_name)}</td><td>${Number(x.quantity)}</td><td>${money(Number(x.unit_price))}</td><td>${money(Number(x.amount))}</td></tr>`).join("")}</tbody></table><h3>Tổng: ${money(Number(data.subtotal))}</h3>`;
+}
+async function openPaymentPreview(id) {
+  try {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+    const preview = await paymentAPI(`/preview/${encodeURIComponent(id)}`);
+    if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px";
+    dialog.innerHTML=`<h2>Tạm tính đơn hàng</h2>${paymentItems(preview)}<button class="btn" data-back>Quay lại</button> <button class="btn primary" data-next>Xác nhận</button>`;
+    document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove());
+    dialog.querySelector("[data-back]").onclick=()=>dialog.close();
+    dialog.querySelector("[data-next]").onclick = () => {
+      dialog.close();
+      if (!canPay()) {
+        paymentPreview = null;
+        notify("Đã tạm tính. Thu ngân cần mở đơn ở trang Thanh toán.");
+        return;
+      }
+      paymentPreview = preview;
+      paymentFormOpen = true;
+      state.page = "payments";
+      render();
+      void loadPaymentOrders();
+    };
+    dialog.showModal();
+  }catch(e){notify(e.message,true);}
+}
+// Orders integration contract: call after SQL order has been saved.
+window.openPaymentPreview = openPaymentPreview;
+function createPaymentQR(amount, orderId) {
+    const bank = "MB";
+    const account = "012345679";
+    const accountName = "MOC CAFE";
+    const content = "THANH TOAN " + orderId;
+
+    return `https://img.vietqr.io/image/${bank}-${account}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent(accountName)}`;
+}
+function paymentOrderFormHTML() {
+  if (!paymentFormOpen) return "";
+  const d=paymentPreview;
+  return `<div class="card" style="margin-bottom:24px"><h2>Thanh toán đơn hàng</h2>
+  ${paymentOrdersError?`<p>${escapeHTML(paymentOrdersError)}</p>`:""}
+  <div class="actions">${paymentOrders.map(o=>`<button class="btn" data-payment-preview="${escapeHTML(o.order_id)}">${escapeHTML(o.table_name)} · ${money(Number(o.subtotal))}</button>`).join("")}</div>
+  ${paymentOrdersLoading?"Đang tải...":(!paymentOrders.length&&!d?"Chưa có bàn chờ thanh toán.":"")}
+  ${d?`${paymentItems(d)}<form id="sql-payment-form"><input type="hidden" name="order_id" value="${escapeHTML(d.order_id)}"><label>Phương thức <select name="payment_method"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option></select></label><div id="payment-cash"><label>Tiền khách đưa <input name="cash_received" type="number" min="${Number(d.subtotal)}" max="999999999999" step="1" required></label><p>Tiền trả lại: <strong id="payment-change">0 đ</strong></p></div><div id="payment-transfer" hidden><div style="text-align:center;padding:20px;">
+    <h3>Quét mã QR thanh toán</h3>
+
+    <img
+        src="${createPaymentQR(Number(d.subtotal), d.order_id)}"
+        alt="Mã QR thanh toán"
+        style="width:250px;max-width:100%;border-radius:12px;"
+    >
+
+  
+</div><label><input type="checkbox" name="transfer_confirmed"> Đã nhận đủ tiền chuyển khoản</label><label>Mã giao dịch (nếu có) <input name="transaction_reference" maxlength="100"></label></div><button class="btn primary" type="submit" ${paymentBusy?"disabled":""}>Xác nhận thanh toán</button></form>`:""}
+  <button class="btn" id="close-payment-form">Quay lại</button></div>`;
+}
+app.addEventListener("input",e=>{
+  const f=e.target.closest("#sql-payment-form"); if(!f||!paymentPreview)return;
+  const cash=f.elements.payment_method.value==="cash"; f.querySelector("#payment-cash").hidden=!cash; f.querySelector("#payment-transfer").hidden=cash; f.elements.cash_received.required=cash; f.elements.cash_received.disabled=!cash; f.elements.transfer_confirmed.required=!cash;
+  f.querySelector("#payment-change").textContent=money(Math.max(0,Number(f.elements.cash_received.value)-Number(paymentPreview.subtotal)));
+});
+async function showSQLInvoice(id) {
+  try {const d=await paymentAPI("/"+encodeURIComponent(id)+"/invoice"); const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px"; dialog.innerHTML=`<section><h2>MỘC Coffee – Hóa đơn ${escapeHTML(d.invoice_id)}</h2><p>${escapeHTML(new Date(d.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(d.employee_name||d.username||d.employee_id||"Không rõ")}</p>${paymentItems(d)}<h3>Đã thanh toán: ${money(Number(d.total_amount))}</h3>${d.payment_method === "transfer" ? `
+<div style="text-align:center;margin:20px 0;">
+  <h3>Mã QR chuyển khoản</h3>
+
+  <img
+    src="${createPaymentQR(Number(d.total_amount), d.order_id)}"
+    style="width:200px;max-width:100%;"
+    alt="QR thanh toán"
+  >
+
+ 
+</div>
+` : ""}<p><b>Phương thức:</b> ${
+  d.payment_method === "cash" ? "Tiền mặt" :
+  d.payment_method === "transfer" ? "Chuyển khoản" :
+  d.payment_method === "card" ? "Thẻ ngân hàng" :
+  "Không xác định"
+}</p>${d.cash_received!=null?`<p>Khách đưa: ${money(Number(d.cash_received))} · Trả lại: ${money(Number(d.cash_received)-Number(d.total_amount))}</p>`:""}</section><button class="btn" data-print>In hóa đơn</button> <button class="btn" data-close>Đóng</button>`; document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove()); dialog.querySelector("[data-close]").onclick=()=>dialog.close(); dialog.querySelector("[data-print]").onclick=()=>{const w=window.open("","_blank");if(!w){notify("Hãy cho phép cửa sổ in",true);return;}w.document.write('<html><head><title>Hóa đơn</title><style>body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}</style></head><body>'+dialog.querySelector("section").innerHTML+'</body></html>');w.document.close();w.focus();w.print();};dialog.showModal();}catch(e){notify(e.message,true);}
+}
+async function submitSQLPayment(form) {
+  if (paymentBusy || !canPay() || !paymentPreview) return;
+
+  const v = Object.fromEntries(new FormData(form));
+
+  const orderId = String(paymentPreview.order_id || "").trim();
+
+  if (!orderId) {
+    notify("Không lấy được mã đơn hàng.", true);
+    return;
+  }
+
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  paymentBusy = true;
+
+  const button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+
+  try {
+    const data = await paymentAPI("", {
+      order_id: orderId,
+      payment_method: v.payment_method,
+      discount: 0,
+      expected_total: Number(paymentPreview.subtotal),
+      cash_received: v.payment_method === "cash" ? Number(v.cash_received) : null,
+      transfer_confirmed: v.transfer_confirmed === "on",
+      transaction_reference: v.transaction_reference
+    });
+
+    if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
+    if (state.cartOrder?.id === orderId) {
+      state.cart = [];
+      state.cartOrder = null;
+    }
+    paymentPreview = null;
+    paymentFormOpen = false;
+    paymentsLoaded = false;
+
+    await loadPaymentsFromSQL();
+    await loadTablesFromSQL();
+    await loadPaymentOrders();
+
+    if (sessionStorage.getItem(TOKEN_KEY) === token) {
+      notify("Thanh toán thành công");
+      await showSQLInvoice(data.invoice_id);
+    }
+
+  } catch (e) {
+    notify(e.message, true);
+  } finally {
+    paymentBusy = false;
+    button.disabled = false;
+  }
+}
+function paymentsPage() {
+  const invoices = [...sqlInvoices].sort(
+    (a, b) => new Date(b.paid_at) - new Date(a.paid_at)
+  );
+
+  const revenue = invoices.reduce(
+    (total, invoice) => total + Number(invoice.total_amount || 0),
+    0
+  );
+
+  const cashCount = invoices.filter(
+    invoice => invoice.payment_method === "cash"
+  ).length;
+
+  const bankCount = invoices.filter(
+    invoice => invoice.payment_method === "transfer"
+  ).length;
+
+  const rows = invoices.map(invoice => `
+    <tr>
+      <td><button class="btn small" data-payment-invoice="${escapeHTML(invoice.invoice_id)}">${escapeHTML(invoice.invoice_id)}</button></td>
+      <td>${escapeHTML(invoice.order_id)}</td>
+      <td>${escapeHTML(
+  invoice.payment_method === "cash" ? "Tiền mặt" :
+  invoice.payment_method === "transfer" ? "Chuyển khoản" :
+  invoice.payment_method === "card" ? "Thẻ ngân hàng" :
+  invoice.payment_method
+)}</td>
+      <td>${money(Number(invoice.total_amount))}</td>
+      <td>${escapeHTML(
+        new Date(invoice.paid_at).toLocaleString("vi-VN")
+      )}</td>
+    </tr>
+  `).join("");
+
+ return heading(
+  "Thanh toán & Hóa đơn",
+  "Danh sách giao dịch lấy từ SQL Server",
+  `
+    <button
+      type="button"
+      class="btn primary"
+      id="open-payment-form"
+    >
+      💳 Thanh toán đơn hàng
+    </button>
+  `
+) + `
+${paymentOrderFormHTML()}
+    <div class="grid stats">
+      ${statsCard(
+        "Tổng hóa đơn",
+        invoices.length,
+        "Giao dịch hoàn tất"
+      )}
+
+      ${statsCard(
+        "Tổng doanh thu",
+        money(revenue),
+        "Dữ liệu SQL Server"
+      )}
+
+      ${statsCard(
+        "Tiền mặt",
+        cashCount,
+        "Số hóa đơn"
+      )}
+
+      ${statsCard(
+        "Chuyển khoản",
+        bankCount,
+        "Số hóa đơn"
+      )}
+    </div>
+
+    <div class="card">
+      <h2>🧾 Lịch sử hóa đơn</h2>
+
+      ${paymentsError
+        ? `<p style="color:red">${escapeHTML(paymentsError)}</p>`
+        : ""
+      }
+
+      <button
+        type="button"
+        id="reload-sql-payments"
+        class="btn small"
+      >
+        🔄 Tải lại hóa đơn
+      </button>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Mã hóa đơn</th>
+            <th>Mã đơn hàng</th>
+            <th>Phương thức</th>
+            <th>Thành tiền</th>
+            <th>Thời gian</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${rows || `
+            <tr>
+              <td colspan="5">
+                ${paymentsLoading
+                  ? "Đang tải dữ liệu..."
+                  : "Chưa có hóa đơn"}
+              </td>
+            </tr>
+          `}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 
   // =====================================================
   // 16. QUAN LY KHO NGUYEN LIEU
@@ -3174,56 +3318,6 @@ ${modal.id && isAdmin() ? `
       `;
     }
 
-    // THANH TOAN
-    else if (modal.type === "pay") {
-      const subtotal = calculateTotal(state.cart);
-
-      title = "Xác nhận thanh toán";
-
-      content = `
-        <form id="payForm">
-
-          <p>
-            Bàn <b>${escapeHTML(state.tableId)}</b>
-            · ${state.cart.reduce(
-              (total, item) => total + item.qty,
-              0
-            )} món
-          </p>
-
-          <div class="split">
-            <b>Tạm tính</b>
-            <b>${money(subtotal)}</b>
-          </div>
-
-          <div class="field">
-            <label>Giảm giá (VNĐ)</label>
-
-            <input
-              name="discount"
-              type="number"
-              min="0"
-              max="${subtotal}"
-              value="0">
-          </div>
-
-          <div class="field">
-            <label>Phương thức thanh toán</label>
-
-            <select name="method">
-              <option>Tiền mặt</option>
-              <option>Chuyển khoản</option>
-            </select>
-          </div>
-
-          
-${formButtons("Xác nhận")}
-
-
-        </form>
-      `;
-    }
-
     // NHAP / XUAT KHO
     else if (modal.type === "stock") {
       const material = db.materials.find(
@@ -3455,23 +3549,48 @@ ${formButtons("Xác nhận")}
   // =====================================================
 
   function render() {
-    if (!currentUser()) {
-      app.innerHTML = loginPage();
-      return;
-    }
-
-    if (!hasPermission(state.page)) {
-      state.page = "dashboard";
-    }
-
-    app.innerHTML = mainLayout();
+  if (!currentUser()) {
+    app.innerHTML = loginPage();
+    return;
   }
+
+  if (!hasPermission(state.page)) {
+    state.page = "dashboard";
+  }
+
+  app.innerHTML = mainLayout();
+
+  // Tự động lấy hóa đơn từ SQL Server khi mở trang Thanh toán
+  if (state.page === "payments" && !paymentsLoaded && !paymentsLoading && !paymentsError) {
+    loadPaymentsFromSQL().then(() => {
+      if (state.page === "payments") {
+        render();
+      }
+    });
+  }
+}
 
   // =====================================================
   // 21. XU LY SU KIEN CLICK
   // =====================================================
 
-app.addEventListener("click", async event => {
+  app.addEventListener("click", async event => {
+ const previewButton=event.target.closest("[data-payment-preview]"); if(previewButton){openPaymentPreview(previewButton.dataset.paymentPreview);return;}
+ const invoiceButton=event.target.closest("[data-payment-invoice]"); if(invoiceButton){showSQLInvoice(invoiceButton.dataset.paymentInvoice);return;}
+ if(event.target.closest("#reload-sql-payments")){paymentsLoaded=false;loadPaymentsFromSQL().then(render);return;}
+ if (event.target.closest("#open-payment-form")) {
+  paymentFormOpen = true;
+  render();
+  loadPaymentOrders();
+  return;
+}
+
+if (event.target.closest("#close-payment-form")) {
+  paymentFormOpen = false;
+  paymentPreview = null;
+  render();
+  return;
+}
   const deleteControl = event.target.closest(
   "[data-product-delete-open], [data-product-delete-cancel], [data-product-delete-confirm]"
 );
@@ -3854,6 +3973,13 @@ if (target.dataset.resumeProduct !== undefined) {
           }
 
           clearSession();
+          sqlInvoices = [];
+          paymentsLoaded = false;
+          paymentsError = "";
+          paymentPreview = null;
+          paymentOrders = [];
+          paymentOrdersError = "";
+          paymentFormOpen = false;
           state.page = "dashboard";
           state.modal = null;
           state.cart = [];
@@ -3890,25 +4016,21 @@ case "save-order":
     break;
 
 
-      case "open-pay":
-        if (!canPay()) {
-          notify(
-            "Chỉ thu ngân hoặc quản lý được thanh toán.",
-            true
-          );
-          return;
+      case "open-pay": {
+        const order = getOpenOrder(state.tableId);
+        if (!order || state.cartOrder?.id !== order.id) {
+          notify("Hãy lưu đơn trước khi tạm tính.", true);
+          break;
         }
-
-        if (!state.cart.length) {
-          notify(
-            "Đơn hàng chưa có món.",
-            true
-          );
-          return;
+        const savedItems = state.cartOrder.items;
+        if (state.cart.length !== savedItems.size ||
+            state.cart.some(item => savedItems.get(item.detailId) !== item.qty)) {
+          notify("Hãy lưu thay đổi của đơn trước khi tạm tính.", true);
+          break;
         }
-
-        openModal("pay");
+        await openPaymentPreview(order.id);
         break;
+      }
 
       case "transfer-table":
         await performTableAction("transfer");
@@ -4111,6 +4233,11 @@ app.addEventListener("change", async event => {
   // =====================================================
 
   app.addEventListener("submit", async event => {
+    if (event.target.id === "sql-payment-form") {
+      event.preventDefault();
+      await submitSQLPayment(event.target);
+      return;
+    }
 
     // LUU TRANG THAI BAN VAO SQL SERVER
     if (event.target.id === "statusTableForm") {
@@ -4718,40 +4845,6 @@ const payload = {
       return;
     }
 
-    // THANH TOAN
-    // -----------------------------------------
-
-    
-if (form.id === "payForm") {
-    const discount = Number(values.discount || 0);
-    const subtotal = calculateTotal(state.cart);
-
-    if (
-        !Number.isFinite(discount) ||
-        discount < 0 ||
-        discount > subtotal
-    ) {
-        notify("Số tiền giảm giá không hợp lệ.", true);
-        return;
-    }
-
-    state.paymentDraft = {
-        tableId: state.tableId,
-        items: state.cart.map(item => ({ ...item })),
-        subtotal,
-        discount,
-        method: values.method,
-        total: subtotal - discount
-    };
-
-    state.modal = null;
-    state.page = "payments";
-    render();
-    return;
-}
-
-
-    // -----------------------------------------
     // NHAP / XUAT KHO
     if (form.id === "stockForm") {
       if (!canManageStock()) {
