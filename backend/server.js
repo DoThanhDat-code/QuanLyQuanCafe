@@ -7,6 +7,8 @@ const { connectDB } = require("./config/db");
 const productRoutes = require("./routes/productRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const tableRoutes = require("./routes/tableRoutes");
+const employeeRoutes = require("./routes/employeeRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const authRoutes = require("./routes/authRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
@@ -33,6 +35,9 @@ app.get("/", (req, res) => {
         message: "MOC Coffee Backend dang hoat dong"
     });
 });
+
+app.use("/api/employees", authMiddleware, employeeRoutes);
+app.use("/api/reports", authMiddleware, reportRoutes);
 
 const PORT = process.env.PORT || 3000;
 
