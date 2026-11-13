@@ -716,6 +716,36 @@ async function resumeProductInSQL(id) {
     setTimeout(() => element.remove(), 3200);
   }
 
+  function confirmAction(title, message, confirmLabel, danger = false) {
+    if (document.querySelector(".confirmation-dialog[open]")) {
+      return Promise.resolve(false);
+    }
+
+    const dialog = document.createElement("dialog");
+    dialog.className = "pos-dialog pos-dialog-compact confirmation-dialog";
+    dialog.setAttribute("aria-labelledby", "confirmation-title");
+    dialog.setAttribute("aria-describedby", "confirmation-message");
+    dialog.innerHTML = `
+      <h2 id="confirmation-title">${escapeHTML(title)}</h2>
+      <p id="confirmation-message" class="muted">${escapeHTML(message)}</p>
+      <form method="dialog" class="modal-actions">
+        <button type="submit" class="btn" value="cancel" autofocus>Hủy</button>
+        <button type="submit" class="btn primary ${danger ? "confirm-danger" : ""}" value="confirm">
+          ${escapeHTML(confirmLabel)}
+        </button>
+      </form>
+    `;
+    document.body.append(dialog);
+    return new Promise(resolve => {
+      dialog.addEventListener("close", () => {
+        const confirmed = dialog.returnValue === "confirm";
+        dialog.remove();
+        resolve(confirmed);
+      }, { once: true });
+      dialog.showModal();
+    });
+  }
+
   function getOpenOrder(tableId) {
     return db.orders.find(order =>
       (order.tableId === tableId || order.linkedTableIds?.includes(tableId)) &&
@@ -889,23 +919,14 @@ async function resumeProductInSQL(id) {
             MỘC<span>COFFEE</span>
           </div>
 
-          <h1>Quản lý quán cà phê thông minh.</h1>
-
-          <p>
-            Từ quản lý bàn, gọi món đến thanh toán,
-            kho hàng và báo cáo doanh thu.
-          </p>
-
-          <div class="coffee-art">☕</div>
+          <h1>Quản lý quán cà phê</h1>
         </div>
 
         <div class="login-form">
 
           <form class="login-panel" id="loginForm">
 
-            <h2>Chào mừng trở lại!</h2>
-
-            <p>Đăng nhập để bắt đầu làm việc.</p>
+            <h2>Đăng nhập</h2>
 
             <div class="field">
               <label for="loginUsername">
@@ -948,19 +969,7 @@ async function resumeProductInSQL(id) {
               Đăng nhập →
             </button>
 
-            <div class="login-help">
-              <b>Hệ thống MỘC Coffee</b>
-
-              <p>
-                Đăng nhập bằng tài khoản
-                được cấp bởi quản lý.
-              </p>
-
-              <p>
-                Mọi hoạt động được quản lý
-                theo quyền của từng nhân viên.
-              </p>
-            </div>
+            <p class="login-help">Dùng tài khoản do quản lý cấp.</p>
 
           </form>
 
@@ -980,9 +989,10 @@ async function resumeProductInSQL(id) {
       .map(item => `
         <button
           class="nav ${state.page === item[0] ? "active" : ""}"
-          data-page="${item[0]}">
+          data-page="${item[0]}"
+          ${state.page === item[0] ? 'aria-current="page"' : ""}>
 
-          <span class="nav-icon">${item[1]}</span>
+          <span class="nav-icon" aria-hidden="true">${item[1]}</span>
           ${item[2]}
 
         </button>
@@ -999,12 +1009,6 @@ async function resumeProductInSQL(id) {
           </div>
 
           ${menu}
-
-          <div class="sidebar-bottom">
-            HỆ THỐNG QUẢN LÝ QUÁN CÀ PHÊ
-            <br>
-            Phiên bản 1.0
-          </div>
 
         </aside>
 
@@ -1662,9 +1666,9 @@ if (mode === "transfer") {
     return;
   }
   const message = destination
-    ? `Chuyen ${sourceId} sang ${destinationId}? Toan bo mon se gop vao hoa don ${destinationId}; ${sourceId} se thanh ban trong.`
-    : `Chuyen don tu ${sourceId} sang ${destinationId}? ${sourceId} se thanh ban trong.`;
-  if (!confirm(message)) return;
+    ? `Chuyển ${sourceId} sang ${destinationId}? Toàn bộ món sẽ gộp vào hóa đơn ${destinationId} và ${sourceId} sẽ thành bàn trống.`
+    : `Chuyển đơn từ ${sourceId} sang ${destinationId}? ${sourceId} sẽ thành bàn trống.`;
+  if (!await confirmAction("Chuyển bàn", message, "Chuyển bàn")) return;
   try {
     const response = await fetch(`${API_URL}/tables/transfer-order`, {
       method: "POST",
@@ -1697,7 +1701,7 @@ if (mode === "merge") {
     notify("Hãy chọn hai bàn chính chưa được ghép vào bàn khác.", true);
     return;
   }
-  if (!confirm(`Gộp ${sourceId} vào ${destinationId}? Tất cả món sẽ tính chung tại ${destinationId}, nhưng cả hai bàn vẫn đang phục vụ.`)) return;
+  if (!await confirmAction("Gộp bàn", `Gộp ${sourceId} vào ${destinationId}? Tất cả món sẽ tính chung tại ${destinationId}, và cả hai bàn vẫn đang phục vụ.`, "Gộp bàn")) return;
   try {
     const response = await fetch(`${API_URL}/tables/join-table`, {
       method: "POST",
@@ -2316,15 +2320,24 @@ function paymentAPI(path, body) {
 }
 
 function paymentItems(data) {
-  return `<p>Đơn: ${escapeHTML(data.order_id)} · Bàn: ${escapeHTML(data.table_name)}</p><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${data.items.map(x=>`<tr><td>${escapeHTML(x.product_name)}</td><td>${Number(x.quantity)}</td><td>${money(Number(x.unit_price))}</td><td>${money(Number(x.amount))}</td></tr>`).join("")}</tbody></table><h3>Tổng: ${money(Number(data.subtotal))}</h3>`;
+  return `<p class="payment-meta">Đơn: ${escapeHTML(data.order_id)} · Bàn: ${escapeHTML(data.table_name)}</p><div class="table-wrap payment-items"><table><thead><tr><th>Món</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>${data.items.map(x=>`<tr><td>${escapeHTML(x.product_name)}</td><td>${Number(x.quantity)}</td><td>${money(Number(x.unit_price))}</td><td>${money(Number(x.amount))}</td></tr>`).join("")}</tbody></table></div><div class="payment-total"><span>Tổng cộng</span><strong>${money(Number(data.subtotal))}</strong></div>`;
 }
 async function openPaymentPreview(id) {
   try {
     const token = sessionStorage.getItem(TOKEN_KEY);
     const preview = await paymentAPI(`/preview/${encodeURIComponent(id)}`);
     if (sessionStorage.getItem(TOKEN_KEY) !== token) return;
-    const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px";
-    dialog.innerHTML=`<h2>Tạm tính đơn hàng</h2>${paymentItems(preview)}<button class="btn" data-back>Quay lại</button> <button class="btn primary" data-next>Xác nhận</button>`;
+    const dialog = document.createElement("dialog");
+    dialog.className = "pos-dialog";
+    dialog.setAttribute("aria-labelledby", "payment-dialog-title");
+    dialog.innerHTML = `
+      <h2 id="payment-dialog-title">Tạm tính đơn hàng</h2>
+      ${paymentItems(preview)}
+      <div class="modal-actions">
+        <button class="btn" data-back autofocus>Quay lại</button>
+        <button class="btn primary" data-next>Xác nhận</button>
+      </div>
+    `;
     document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove());
     dialog.querySelector("[data-back]").onclick=()=>dialog.close();
     dialog.querySelector("[data-next]").onclick = () => {
@@ -2356,22 +2369,61 @@ function createPaymentQR(amount, orderId) {
 function paymentOrderFormHTML() {
   if (!paymentFormOpen) return "";
   const d=paymentPreview;
-  return `<div class="card" style="margin-bottom:24px"><h2>Thanh toán đơn hàng</h2>
-  ${paymentOrdersError?`<p>${escapeHTML(paymentOrdersError)}</p>`:""}
-  <div class="actions">${paymentOrders.map(o=>`<button class="btn" data-payment-preview="${escapeHTML(o.order_id)}">${escapeHTML(o.table_name)} · ${money(Number(o.subtotal))}</button>`).join("")}</div>
-  ${paymentOrdersLoading?"Đang tải...":(!paymentOrders.length&&!d?"Chưa có bàn chờ thanh toán.":"")}
-  ${d?`${paymentItems(d)}<form id="sql-payment-form"><input type="hidden" name="order_id" value="${escapeHTML(d.order_id)}"><label>Phương thức <select name="payment_method"><option value="cash">Tiền mặt</option><option value="transfer">Chuyển khoản</option></select></label><div id="payment-cash"><label>Tiền khách đưa <input name="cash_received" type="number" min="${Number(d.subtotal)}" max="999999999999" step="1" required></label><p>Tiền trả lại: <strong id="payment-change">0 đ</strong></p></div><div id="payment-transfer" hidden><div style="text-align:center;padding:20px;">
-    <h3>Quét mã QR thanh toán</h3>
-
-    <img
-        src="${createPaymentQR(Number(d.subtotal), d.order_id)}"
-        alt="Mã QR thanh toán"
-        style="width:250px;max-width:100%;border-radius:12px;"
-    >
-
-  
-</div><label><input type="checkbox" name="transfer_confirmed"> Đã nhận đủ tiền chuyển khoản</label><label>Mã giao dịch (nếu có) <input name="transaction_reference" maxlength="100"></label></div><button class="btn primary" type="submit" ${paymentBusy?"disabled":""}>Xác nhận thanh toán</button></form>`:""}
-  <button class="btn" id="close-payment-form">Quay lại</button></div>`;
+  return `
+    <section class="card payment-card">
+      <h2>Thanh toán đơn hàng</h2>
+      ${paymentOrdersError ? `<p class="notice">${escapeHTML(paymentOrdersError)}</p>` : ""}
+      <div class="actions">
+        ${paymentOrders.map(o => `
+          <button class="btn" data-payment-preview="${escapeHTML(o.order_id)}">
+            ${escapeHTML(o.table_name)} · ${money(Number(o.subtotal))}
+          </button>
+        `).join("")}
+      </div>
+      ${paymentOrdersLoading ? "Đang tải..." : (!paymentOrders.length && !d ? "Chưa có bàn chờ thanh toán." : "")}
+      ${d ? `
+        ${paymentItems(d)}
+        <form id="sql-payment-form">
+          <input type="hidden" name="order_id" value="${escapeHTML(d.order_id)}">
+          <label class="field">
+            <span>Phương thức</span>
+            <select name="payment_method">
+              <option value="cash">Tiền mặt</option>
+              <option value="transfer">Chuyển khoản</option>
+            </select>
+          </label>
+          <div id="payment-cash">
+            <label class="field">
+              <span>Tiền khách đưa</span>
+              <input name="cash_received" type="number" min="${Number(d.subtotal)}"
+                max="999999999999" step="1" required>
+            </label>
+            <p class="payment-total"><span>Tiền trả lại</span><strong id="payment-change">0 đ</strong></p>
+          </div>
+          <div id="payment-transfer" hidden>
+            <div class="payment-qr">
+              <h3>Quét mã QR thanh toán</h3>
+              <img src="${createPaymentQR(Number(d.subtotal), d.order_id)}" alt="Mã QR thanh toán">
+            </div>
+            <label class="payment-check">
+              <input type="checkbox" name="transfer_confirmed">
+              Đã nhận đủ tiền chuyển khoản
+            </label>
+            <label class="field">
+              <span>Mã giao dịch (nếu có)</span>
+              <input name="transaction_reference" maxlength="100">
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button class="btn" id="close-payment-form" type="button">Quay lại</button>
+            <button class="btn primary" type="submit" ${paymentBusy ? "disabled" : ""}>
+              Xác nhận thanh toán
+            </button>
+          </div>
+        </form>
+      ` : `<div class="modal-actions"><button class="btn" id="close-payment-form" type="button">Quay lại</button></div>`}
+    </section>
+  `;
 }
 app.addEventListener("input",e=>{
   const f=e.target.closest("#sql-payment-form"); if(!f||!paymentPreview)return;
@@ -2379,24 +2431,66 @@ app.addEventListener("input",e=>{
   f.querySelector("#payment-change").textContent=money(Math.max(0,Number(f.elements.cash_received.value)-Number(paymentPreview.subtotal)));
 });
 async function showSQLInvoice(id) {
-  try {const d=await paymentAPI("/"+encodeURIComponent(id)+"/invoice"); const dialog=document.createElement("dialog"); dialog.style.cssText="width:min(650px,90vw);border:0;border-radius:16px;padding:24px"; dialog.innerHTML=`<section><h2>MỘC Coffee – Hóa đơn ${escapeHTML(d.invoice_id)}</h2><p>${escapeHTML(new Date(d.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(d.employee_name||d.username||d.employee_id||"Không rõ")}</p>${paymentItems(d)}<h3>Đã thanh toán: ${money(Number(d.total_amount))}</h3>${d.payment_method === "transfer" ? `
-<div style="text-align:center;margin:20px 0;">
-  <h3>Mã QR chuyển khoản</h3>
+  try {
+    const invoice = await paymentAPI("/" + encodeURIComponent(id) + "/invoice");
+    const dialog = document.createElement("dialog");
+    dialog.className = "pos-dialog";
+    dialog.setAttribute("aria-labelledby", "invoice-dialog-title");
 
-  <img
-    src="${createPaymentQR(Number(d.total_amount), d.order_id)}"
-    style="width:200px;max-width:100%;"
-    alt="QR thanh toán"
-  >
+    const methods = new Map(Object.entries({
+      cash: "Tiền mặt",
+      transfer: "Chuyển khoản",
+      card: "Thẻ ngân hàng"
+    }));
+    const method = methods.get(invoice.payment_method) || "Không xác định";
+    const cashier = invoice.employee_name || invoice.username || invoice.employee_id || "Không rõ";
+    const total = Number(invoice.total_amount);
 
- 
-</div>
-` : ""}<p><b>Phương thức:</b> ${
-  d.payment_method === "cash" ? "Tiền mặt" :
-  d.payment_method === "transfer" ? "Chuyển khoản" :
-  d.payment_method === "card" ? "Thẻ ngân hàng" :
-  "Không xác định"
-}</p>${d.cash_received!=null?`<p>Khách đưa: ${money(Number(d.cash_received))} · Trả lại: ${money(Number(d.cash_received)-Number(d.total_amount))}</p>`:""}</section><button class="btn" data-print>In hóa đơn</button> <button class="btn" data-close>Đóng</button>`; document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove()); dialog.querySelector("[data-close]").onclick=()=>dialog.close(); dialog.querySelector("[data-print]").onclick=()=>{const w=window.open("","_blank");if(!w){notify("Hãy cho phép cửa sổ in",true);return;}w.document.write('<html><head><title>Hóa đơn</title><style>body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}</style></head><body>'+dialog.querySelector("section").innerHTML+'</body></html>');w.document.close();w.focus();w.print();};dialog.showModal();}catch(e){notify(e.message,true);}
+    dialog.innerHTML = `
+      <section>
+        <h2 id="invoice-dialog-title">MỘC Coffee – Hóa đơn ${escapeHTML(invoice.invoice_id)}</h2>
+        <p class="muted">${escapeHTML(new Date(invoice.paid_at).toLocaleString("vi-VN"))} · Thu ngân: ${escapeHTML(cashier)}</p>
+        ${paymentItems(invoice)}
+        <h3>Đã thanh toán: ${money(total)}</h3>
+        ${invoice.payment_method === "transfer" ? `
+          <div class="payment-qr">
+            <h3>Mã QR chuyển khoản</h3>
+            <img src="${createPaymentQR(total, invoice.order_id)}" alt="QR thanh toán" width="200">
+          </div>
+        ` : ""}
+        <p><b>Phương thức:</b> ${method}</p>
+        ${invoice.cash_received != null ? `
+          <p>Khách đưa: ${money(Number(invoice.cash_received))} · Trả lại: ${money(Number(invoice.cash_received) - total)}</p>
+        ` : ""}
+      </section>
+      <div class="modal-actions">
+        <button class="btn" data-close autofocus>Đóng</button>
+        <button class="btn primary" data-print>In hóa đơn</button>
+      </div>
+    `;
+
+    document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    dialog.querySelector("[data-close]").onclick = () => dialog.close();
+    dialog.querySelector("[data-print]").onclick = () => {
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        notify("Hãy cho phép cửa sổ in", true);
+        return;
+      }
+      printWindow.document.write(
+        '<html lang="vi"><head><title>Hóa đơn</title><style>' +
+        'body{font:16px Arial;padding:24px}td,th{padding:8px;text-align:left}.payment-qr img{max-width:100%}' +
+        '</style></head><body>' + dialog.querySelector("section").innerHTML + '</body></html>'
+      );
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    };
+    dialog.showModal();
+  } catch (error) {
+    notify(error.message, true);
+  }
 }
 async function submitSQLPayment(form) {
   if (paymentBusy || !canPay() || !paymentPreview) return;
@@ -2741,13 +2835,13 @@ ${paymentOrderFormHTML()}
 
     const path = `/inventory/ingredients/${encodeURIComponent(material.id)}`;
     if (action === "delete-material") {
-      if (!confirm(`Xóa vĩnh viễn ${material.name} (${material.id})? Bạn sẽ không thể khôi phục nguyên liệu này.`)) return;
+      if (!await confirmAction("Xóa nguyên liệu", `Xóa vĩnh viễn ${material.name} (${material.id})? Bạn sẽ không thể khôi phục nguyên liệu này.`, "Xóa vĩnh viễn", true)) return;
       await saveInventoryChange(control, path, "DELETE", null, "Đã xóa nguyên liệu.");
       return;
     }
 
     const deactivate = action === "deactivate-material";
-    if (deactivate && !confirm(`Ngừng sử dụng ${material.name} (${material.id})?`)) return;
+    if (deactivate && !await confirmAction("Ngừng sử dụng nguyên liệu", `Ngừng sử dụng ${material.name} (${material.id})?`, "Ngừng sử dụng")) return;
     const operation = deactivate ? "deactivate" : "restore";
     const message = deactivate ? "Đã ngừng sử dụng nguyên liệu." : "Đã khôi phục nguyên liệu.";
     await saveInventoryChange(control, `${path}/${operation}`, "PATCH", null, message);
@@ -3383,7 +3477,7 @@ if (modal.type === "product") {
 </div>
 
 ${modal.id && canDeleteProducts() ? `
-  <dialog class="product-delete-dialog" aria-labelledby="product-delete-title">
+  <dialog class="product-delete-dialog pos-dialog pos-dialog-compact" aria-labelledby="product-delete-title">
     <h2 id="product-delete-title">Xác nhận xóa món</h2>
     <p>Bạn có chắc muốn xóa món <strong>${escapeHTML(product.name)}</strong>?</p>
 
@@ -3613,15 +3707,16 @@ ${modal.id && canDeleteProducts() ? `
         class="modal-cover"
         data-action="close-modal">
 
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
 
-          <div class="split">
-            <h2>${title}</h2>
+          <div class="modal-header">
+            <h2 id="modal-title">${title}</h2>
 
             <button
               type="button"
-              class="btn small"
-              data-action="close-modal">
+              class="btn modal-close"
+              data-action="close-modal"
+              aria-label="Đóng">
               ✕
             </button>
           </div>
@@ -3768,8 +3863,11 @@ if (deleteControl) {
         return;
       }
 
-      const confirmed = confirm(
-        `Bạn có chắc muốn xóa ${table.name || table.id} không?`
+      const confirmed = await confirmAction(
+        "Xóa bàn",
+        `Bạn có chắc muốn xóa ${table.name || table.id} không?`,
+        "Xóa bàn",
+        true
       );
 
       if (!confirmed) return;
@@ -3836,7 +3934,7 @@ if (deleteControl) {
       );
 
       if (!table) {
-        alert("Không tìm thấy bàn cần sửa!");
+        notify("Không tìm thấy bàn cần sửa!", true);
         return;
       }
 
@@ -3954,7 +4052,7 @@ const product = db.products.find(
 
   const id = target.dataset.stopProduct;
 
-  if (!confirm("Bạn có chắc muốn ngừng bán món này?")) {
+  if (!await confirmAction("Ngừng bán", "Bạn có chắc muốn ngừng bán món này?", "Ngừng bán")) {
     return;
   }
 
@@ -3982,7 +4080,7 @@ if (target.dataset.resumeProduct !== undefined) {
 
   const id = target.dataset.resumeProduct;
 
-  if (!confirm("Bạn muốn mở bán lại món này?")) {
+  if (!await confirmAction("Mở bán lại", "Bạn muốn mở bán lại món này?", "Mở bán lại")) {
     return;
   }
 
@@ -4231,10 +4329,13 @@ case "toggle-account-status": {
 
     const newStatus = !Boolean(account.is_active);
 
-    const actionName = newStatus ? "mo khoa" : "khoa";
+    const actionName = newStatus ? "Mở khóa" : "Khóa";
 
-    if (!confirm(
-        `Ban co chac muon ${actionName} tai khoan ${account.username}?`
+    if (!await confirmAction(
+        `${actionName} tài khoản`,
+        `Bạn có chắc muốn ${actionName.toLowerCase()} tài khoản ${account.username}?`,
+        actionName,
+        !newStatus
     )) {
         break;
     }
@@ -4420,7 +4521,7 @@ app.addEventListener("change", async event => {
       const tableId = state.modal?.tableId;
 
       if (!tableId) {
-        alert("Không tìm thấy mã bàn cần sửa!");
+        notify("Không tìm thấy mã bàn cần sửa!", true);
         return;
       }
 
@@ -4443,7 +4544,7 @@ app.addEventListener("change", async event => {
         !Number.isInteger(seats) ||
         seats <= 0
       ) {
-        alert("Tên bàn hoặc số ghế không hợp lệ!");
+        notify("Tên bàn hoặc số ghế không hợp lệ!", true);
         return;
       }
 
@@ -4476,11 +4577,11 @@ app.addEventListener("change", async event => {
 
         await loadTablesFromSQL();
 
-        alert("Cập nhật bàn thành công!");
+        notify("Cập nhật bàn thành công!");
 
       } catch (error) {
         console.error("Lỗi sửa bàn:", error);
-        alert(error.message);
+        notify(error.message, true);
       }
 
       return;
