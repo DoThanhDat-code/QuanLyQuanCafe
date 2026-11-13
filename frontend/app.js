@@ -477,6 +477,7 @@
             qty: Number(i.qty),
             price: Number(i.price)
           })),
+          linkedTableIds: o.linkedTableIds || [],
           createdAt: o.order_date
         }))
       );
@@ -557,7 +558,7 @@
 
   function getOpenOrder(tableId) {
     return db.orders.find(order =>
-      order.tableId === tableId &&
+      (order.tableId === tableId || order.linkedTableIds?.includes(tableId)) &&
       order.status === "open"
     );
   }
@@ -1009,6 +1010,8 @@ const available = db.tables.filter(
 
           <div class="bottom">
             ${pill(statusText, statusColor)}
+             ${order?.linkedTableIds?.includes(table.id) ? `<small>Ghép với ${escapeHTML(order.tableId)}</small>` : ""}
+             ${order?.tableId === table.id && order?.linkedTableIds?.length ? `<small>Bàn chính · Ghép với ${escapeHTML(order.linkedTableIds.join(", "))}</small>` : ""}
           </div>
 
           ${order
@@ -1098,7 +1101,7 @@ const available = db.tables.filter(
         <h2>🔄 Chuyển bàn và gộp bàn</h2>
 
         <p class="muted">
-          Chuyển khách sang bàn khác hoặc gộp hai đơn hàng.
+          Chuyển khách sang bàn trống hoặc gộp hóa đơn hai bàn đang phục vụ.
         </p>
 
         <div class="grid two">
@@ -1142,7 +1145,7 @@ const available = db.tables.filter(
 
         <p class="muted" style="margin-top:15px">
           Chuyển bàn yêu cầu bàn đích còn trống.
-          Gộp bàn yêu cầu cả hai bàn có đơn hàng.
+          Gộp bàn: hai bàn đang phục vụ; toàn bộ món chuyển vào hóa đơn bàn đích, bàn nguồn vẫn phục vụ và gọi thêm món vào hóa đơn chung.
         </p>
 
       </div>
@@ -1205,152 +1208,73 @@ async function performTableAction(mode) {
 
 
 if (mode === "transfer") {
-  if (destination) {
-    notify(
-      "Bàn đích đang phục vụ. Hãy dùng chức năng gộp bàn.",
-      true
-    );
+  if (source.tableId !== sourceId) {
+    notify("Ban nguon dang ghep voi ban khac, khong the chuyen.", true);
     return;
   }
-
-  const targetTable = db.tables.find(
-    table => table.id === destinationId
-  );
-
-  if (!targetTable || targetTable.status !== "available") {
-    notify("Bàn đích không ở trạng thái bàn trống.", true);
+  const targetTable = db.tables.find(table => table.id === destinationId);
+  if (!targetTable || ["reserved", "maintenance"].includes(targetTable.status)) {
+    notify("Ban dich khong san sang de chuyen.", true);
     return;
   }
-
+  if (destination && destination.tableId !== destinationId) {
+    notify("Ban dich dang la ban phu cua nhom khac.", true);
+    return;
+  }
+  const message = destination
+    ? `Chuyen ${sourceId} sang ${destinationId}? Toan bo mon se gop vao hoa don ${destinationId}; ${sourceId} se thanh ban trong.`
+    : `Chuyen don tu ${sourceId} sang ${destinationId}? ${sourceId} se thanh ban trong.`;
+  if (!confirm(message)) return;
   try {
-    const response = await fetch(
-      `${API_URL}/tables/transfer-order`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
-        },
-        body: JSON.stringify({
-          orderId: source.id,
-          sourceId: sourceId,
-          destinationId: destinationId
-        })
-      }
-    );
-
+    const response = await fetch(`${API_URL}/tables/transfer-order`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+      },
+      body: JSON.stringify({ orderId: source.id, sourceId, destinationId })
+    });
     const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        result.error || "Không thể chuyển bàn."
-      );
-    }
-
-    // Chỉ thay đổi dữ liệu giao diện sau khi SQL thành công
-    source.tableId = destinationId;
-    source.updatedAt = now();
-
-    if (state.tableId === sourceId) {
-      state.tableId = destinationId;
-    }
-
-    loadCart();
-    saveDatabase();
-
+    if (!response.ok) throw new Error(result.error || "Khong the chuyen ban.");
+    if (state.tableId === sourceId) state.tableId = destinationId;
     await loadTablesFromSQL();
-
-    notify(
-      `Đã chuyển đơn từ ${sourceId} sang ${destinationId}.`
-    );
-
+    notify(`Da chuyen ${sourceId} sang ${destinationId}. ${sourceId} da trong.`);
   } catch (error) {
-    console.error("Lỗi chuyển bàn:", error);
-
-    notify(
-      error.message || "Không thể chuyển bàn.",
-      true
-    );
+    console.error("Loi chuyen ban:", error);
+    notify(error.message || "Khong the chuyen ban.", true);
+    await loadTablesFromSQL();
   }
-
   return;
 }
 
 if (mode === "merge") {
-  if (!destination) {
-    notify("Bàn đích chưa có đơn hàng để gộp.", true);
+  const target = db.tables.find(t => t.id === destinationId);
+  if (!destination || !target || target.status !== "occupied") {
+    notify("Bàn đích phải đang phục vụ và có đơn mở.", true);
     return;
   }
-
-  try {
-    const response = await fetch(
-      `${API_URL}/tables/merge-orders`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
-        },
-        body: JSON.stringify({
-          sourceOrderId: source.id,
-          destinationOrderId: destination.id
-        })
-      }
-    );
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        result.error || "Không thể gộp bàn."
-      );
-    }
-
-    // SQL thành công mới cập nhật dữ liệu giao diện
-    for (const item of source.items) {
-      const existingItem = destination.items.find(
-        x =>
-          x.productId === item.productId &&
-          x.price === item.price
-      );
-
-      if (existingItem) {
-        existingItem.qty += item.qty;
-      } else {
-        destination.items.push({ ...item });
-      }
-    }
-
-    source.status = "merged";
-    source.mergedInto = destination.id;
-    source.mergedAt = now();
-
-    destination.updatedAt = now();
-
-    if (
-      state.tableId === sourceId ||
-      state.tableId === destinationId
-    ) {
-      state.tableId = destinationId;
-      loadCart();
-    }
-
-    saveDatabase();
-    await loadTablesFromSQL();
-
-    notify(
-      `Đã gộp bàn ${sourceId} vào bàn ${destinationId}.`
-    );
-
-  } catch (error) {
-    console.error("Lỗi gộp bàn:", error);
-
-    notify(
-      error.message || "Không thể gộp bàn.",
-      true
-    );
+  if (source.tableId !== sourceId || destination.tableId !== destinationId) {
+    notify("Hãy chọn hai bàn chính chưa được ghép vào bàn khác.", true);
+    return;
   }
-
+  if (!confirm(`Gộp ${sourceId} vào ${destinationId}? Tất cả món sẽ tính chung tại ${destinationId}, nhưng cả hai bàn vẫn đang phục vụ.`)) return;
+  try {
+    const response = await fetch(`${API_URL}/tables/join-table`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
+      },
+      body: JSON.stringify({ sourceId, destinationId, orderId: source.id, destinationOrderId: destination.id })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Không thể gộp bàn.");
+    await loadTablesFromSQL();
+    notify(`Đã gộp ${sourceId} vào ${destinationId}. Hai bàn vẫn phục vụ; thanh toán chung tại ${destinationId}.`);
+  } catch (error) {
+    notify(error.message || "Không thể gộp bàn.", true);
+    await loadTablesFromSQL();
+  }
   return;
 }
   }
@@ -1579,7 +1503,7 @@ async function saveOrder() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
         },
-        body: JSON.stringify({ orderId, tableId: state.tableId, items })
+        body: JSON.stringify({ orderId, tableId: existing?.tableId || state.tableId, items })
       });
       const contentType = response.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
@@ -2255,6 +2179,8 @@ if (!(await saveOrder())) return;
           </div>
 
 
+
+
           ${formButtons("Lưu bàn")}
         </form>
       `;
@@ -2275,8 +2201,10 @@ if (!(await saveOrder())) return;
           <div class="field">
             <label>Mã bàn</label>
             <input
+              name="table_id"
+              maxlength="10"
               value="${escapeHTML(table.id)}"
-              disabled>
+              required>
           </div>
 
           <div class="field">
@@ -2287,6 +2215,8 @@ if (!(await saveOrder())) return;
               value="${escapeHTML(table.name)}"
               required>
           </div>
+
+
 
 
           ${formButtons("Lưu thay đổi")}
@@ -2752,7 +2682,7 @@ app.addEventListener("click", async event => {
 
     if (!target) return;
 
-    // XOA MEM BAN TRONG SQL SERVER
+    // XOA VINH VIEN BAN TRONG SQL SERVER
     if (target.dataset.deleteTable) {
       if (!checkManager()) return;
 
@@ -3188,13 +3118,18 @@ case "save-order":
 
       const formData = new FormData(event.target);
 
+      const table_id = String(formData.get("table_id") || "").trim().toUpperCase();
+
       const table_name = String(
         formData.get("table_name") || ""
       ).trim();
 
-      const seats = Number(formData.get("seats"));
+      const currentTable = db.tables.find(item => item.id === tableId);
+      const seats = Number(currentTable?.seats) > 0 ? Number(currentTable.seats) : 4;
 
       if (
+        !table_id ||
+        table_id.length > 10 ||
         !table_name ||
         table_name.length > 100 ||
         !Number.isInteger(seats) ||
@@ -3214,6 +3149,7 @@ case "save-order":
             Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY) || ""}`
             },
             body: JSON.stringify({
+              table_id,
               table_name,
               seats
             })
@@ -3260,7 +3196,7 @@ case "save-order":
         formData.get("table_name") || ""
       ).trim();
 
-      const seats = Number(formData.get("seats"));
+      const seats = 4; // Mặc định 4 ghế, không hiển thị trên giao diện.
 
       if (
         !table_id ||
