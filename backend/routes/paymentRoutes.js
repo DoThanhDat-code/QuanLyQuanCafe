@@ -1,4 +1,3 @@
-
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
@@ -19,7 +18,7 @@ const paymentAuth = (preview = false) => async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
 
     const pool = await connectDB();
     const result = await pool.request()
@@ -39,7 +38,9 @@ const paymentAuth = (preview = false) => async (req, res, next) => {
       });
     }
 
-    if (!(preview ? ["admin", "manager", "thungan", "phucvu"] : ["admin", "manager", "thungan"]).includes(user.role)) {
+    const cashierRoles = ["admin", "manager", "thungan", "cashier"];
+    const allowedRoles = preview ? [...cashierRoles, "phucvu", "waiter"] : cashierRoles;
+    if (!allowedRoles.includes(user.role)) {
       return res.status(403).json({
         message: "Khong co quyen thanh toan"
       });
@@ -81,7 +82,8 @@ router.get("/orders", paymentAuth(true), async (req,res) => {
       COALESCE(SUM(od.quantity*od.unit_price),0) subtotal
       FROM dbo.orders o JOIN dbo.tables t ON t.table_id=o.table_id
       LEFT JOIN dbo.order_details od ON od.order_id=o.order_id
-      WHERE o.status IN ('pending','serving') AND t.status='occupied'
+      WHERE o.status IN ('pending','serving') AND t.status='occupied' AND t.is_active=1
+        AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.order_id)
       GROUP BY o.order_id,o.table_id,t.table_name,o.status ORDER BY t.table_name`);
     res.json(result.recordset);
   } catch(e) { res.status(500).json({message:"Không tải được đơn hàng"}); }
@@ -92,7 +94,7 @@ async function details(pool,id) {
 router.get(["/preview/:orderId","/orders/:orderId"], paymentAuth(true), async (req,res) => {
   try {
     const pool=await connectDB(); const id=req.params.orderId;
-    const order=(await pool.request().input("id",sql.VarChar(20),id).query(`SELECT o.order_id,o.table_id,t.table_name,o.status FROM dbo.orders o JOIN dbo.tables t ON t.table_id=o.table_id WHERE o.order_id=@id AND o.status IN ('pending','serving') AND t.status='occupied' AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.order_id)`)).recordset[0];
+    const order=(await pool.request().input("id",sql.VarChar(20),id).query(`SELECT o.order_id,o.table_id,t.table_name,o.status FROM dbo.orders o JOIN dbo.tables t ON t.table_id=o.table_id WHERE o.order_id=@id AND o.status IN ('pending','serving') AND t.status='occupied' AND t.is_active=1 AND NOT EXISTS (SELECT 1 FROM dbo.invoices i WHERE i.order_id=o.order_id)`)).recordset[0];
     if(!order) return res.status(404).json({message:"Không có đơn đang chờ thanh toán"});
     const items=await details(pool,id); res.json({...order,items,subtotal:items.reduce((n,x)=>n+Number(x.amount),0)});
   } catch(e) {res.status(500).json({message:"Không tải được tạm tính"});}
@@ -133,8 +135,23 @@ router.post("/", paymentAuth(), async (req, res) => {
   try {
     const pool = await connectDB();
 
+    const initialOrder = (await pool.request()
+      .input("orderId", sql.VarChar(20), order_id)
+      .query("SELECT table_id FROM dbo.orders WHERE order_id = @orderId")).recordset[0];
+    if (!initialOrder) {
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+    }
+
     transaction = new sql.Transaction(pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+    const table = (await new sql.Request(transaction)
+      .input("tableId", sql.VarChar(10), initialOrder.table_id)
+      .query(`
+        SELECT status, is_active
+        FROM dbo.[tables] WITH (UPDLOCK, HOLDLOCK)
+        WHERE table_id = @tableId
+      `)).recordset[0];
 
     const orderResult = await new sql.Request(transaction)
       .input("orderId", sql.VarChar(20), order_id)
@@ -160,11 +177,17 @@ router.post("/", paymentAuth(), async (req, res) => {
       });
     }
 
-    const table = (await new sql.Request(transaction).input("tableId",sql.VarChar(10),order.table_id).query("SELECT status FROM dbo.tables WITH (UPDLOCK,HOLDLOCK) WHERE table_id=@tableId")).recordset[0];
-    const existing = (await new sql.Request(transaction).input("orderId",sql.VarChar(20),order_id).query("SELECT invoice_id FROM dbo.invoices WHERE order_id=@orderId")).recordset[0];
-    if (!table || table.status !== "occupied" || existing) {
+    if (order.table_id !== initialOrder.table_id || !table?.is_active || table.status !== "occupied") {
       await transaction.rollback();
-      return res.status(409).json({message:"Bàn không hoạt động hoặc đơn đã có hóa đơn"});
+      return res.status(409).json({ message: "Bàn của đơn đã thay đổi hoặc không còn hoạt động" });
+    }
+
+    const existing = (await new sql.Request(transaction)
+      .input("orderId", sql.VarChar(20), order_id)
+      .query("SELECT invoice_id FROM dbo.invoices WHERE order_id = @orderId")).recordset[0];
+    if (existing) {
+      await transaction.rollback();
+      return res.status(409).json({ message: "Đơn đã có hóa đơn" });
     }
 
     const totalResult = await new sql.Request(transaction)
@@ -199,7 +222,7 @@ router.post("/", paymentAuth(), async (req, res) => {
 
     const totalAmount = subtotal - discountValue;
     const cash = Number(cash_received);
-    if (Number(expected_total) !== totalAmount || (payment_method === "cash" && (cash_received == null || !Number.isSafeInteger(cash) || cash < totalAmount || cash > 999999999999)) || (payment_method === "transfer" && transfer_confirmed !== true)) {
+    if (expected_total == null || Number(expected_total) !== totalAmount || (payment_method === "cash" && (cash_received == null || !Number.isSafeInteger(cash) || cash < totalAmount || cash > 999999999999)) || (payment_method === "transfer" && transfer_confirmed !== true)) {
       await transaction.rollback();
       return res.status(400).json({message:"Tổng tiền đã thay đổi hoặc chưa nhận đủ tiền. Hãy kiểm tra lại."});
     }
@@ -252,23 +275,34 @@ router.post("/", paymentAuth(), async (req, res) => {
         WHERE order_id = @orderId
       `);
 
-    // Chỉ giải phóng bàn khi không còn đơn đang phục vụ
-    if (order.table_id) {
-      await new sql.Request(transaction)
-        .input("tableId", sql.VarChar(10), order.table_id)
-        .query(`
-          UPDATE dbo.tables
-          SET status = 'available'
-          WHERE table_id = @tableId
-            AND status = 'occupied'
-            AND NOT EXISTS (
-              SELECT 1
-              FROM dbo.orders
-              WHERE table_id = @tableId
-                AND status IN ('pending', 'serving')
-            )
-        `);
-    }
+    await new sql.Request(transaction)
+      .input("orderId", sql.VarChar(20), order_id)
+      .input("tableId", sql.VarChar(10), order.table_id)
+      .query(`
+        DECLARE @ReleasedLinks TABLE (table_id varchar(10) PRIMARY KEY);
+
+        DELETE FROM dbo.table_order_links
+        OUTPUT DELETED.table_id INTO @ReleasedLinks (table_id)
+        WHERE order_id = @orderId;
+
+        UPDATE t
+        SET status = 'available'
+        FROM dbo.[tables] AS t
+        WHERE t.status = 'occupied'
+          AND (t.table_id = @tableId OR EXISTS (
+            SELECT 1 FROM @ReleasedLinks r WHERE r.table_id = t.table_id
+          ))
+          AND NOT EXISTS (
+            SELECT 1 FROM dbo.orders o
+            WHERE o.table_id = t.table_id AND o.status IN ('pending', 'serving')
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM dbo.table_order_links l
+            JOIN dbo.orders o ON o.order_id = l.order_id
+            WHERE l.table_id = t.table_id AND o.status IN ('pending', 'serving')
+          );
+      `);
 
     await transaction.commit();
 
@@ -288,6 +322,12 @@ router.post("/", paymentAuth(), async (req, res) => {
       } catch (_) {
         // Transaction co the da tu rollback
       }
+    }
+
+    if (error.number === 1205) {
+      return res.status(409).json({
+        message: "Đơn đang được cập nhật. Hãy mở lại tạm tính và thử thanh toán."
+      });
     }
 
     console.error("Loi thanh toan:", error);
