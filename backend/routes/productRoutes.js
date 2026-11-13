@@ -1,7 +1,7 @@
 
 const express = require("express");
 const { sql, connectDB } = require("../config/db");
-
+const requireAdmin = require("../middleware/requireAdmin");
 const router = express.Router();
 
 // ============================================
@@ -729,7 +729,7 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireManager,
+  requireAdmin,
   async (req, res) => {
     try {
       const id = String(req.params.id || "").trim();

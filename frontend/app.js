@@ -467,7 +467,7 @@ authenticatedUser = {
     `${API_URL}${path}`,
     options
   );
-
+if (response.status === 204) return null;
   const result = await response.json();
 
   if (!response.ok) {
@@ -3514,9 +3514,26 @@ if (deleteControl) {
   } else if (deleteControl.hasAttribute("data-product-delete-cancel")) {
     dialog.close();
   } else {
+  const productId = state.modal?.id;
+  if (!productId || deleteControl.disabled) return;
+
+  deleteControl.disabled = true;
+
+  try {
+    await productRequest("DELETE", `/${encodeURIComponent(productId)}`);
+  } catch (error) {
     dialog.close();
-    notify("Chức năng xóa món đang chờ kết nối API.");
+    deleteControl.disabled = false;
+    notify(error.message || "Không thể xóa món.", true);
+    return;
   }
+
+  dialog.close();
+  state.modal = null;
+  db.products = db.products.filter(product => product.id !== productId);
+  render();
+  notify("Đã xóa món.");
+}
 
   return;
 }
