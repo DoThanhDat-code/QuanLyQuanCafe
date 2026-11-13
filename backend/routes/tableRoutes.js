@@ -1,47 +1,65 @@
 
+const { sql, connectDB } = require("../config/db");
 const express = require("express");
+const authenticate = require("../middleware/authenticate");
+const requireAdmin = require("../middleware/requireAdmin");
+
 const router = express.Router();
 
-const { sql, connectDB } = require("../config/db");
+const tableReadRoles = ["admin", "waiter", "phucvu", "cashier", "thungan"];
 
-// 1. LAY DANH SACH BAN
-// Giu nguyen API GET hien tai
-router.get("/", async (req, res) => {
+router.use(authenticate);
+
+function requireTableRead(req, res, next) {
+    if (!tableReadRoles.includes(req.user.role)) {
+        return res.status(403).json({
+            error: "Bạn không có quyền xem thông tin bàn."
+        });
+    }
+
+    return next();
+}
+
+// Lấy danh sách bàn, gồm bàn đang dùng chung đơn.
+router.get("/", requireTableRead, async (req, res) => {
     try {
         const pool = await connectDB();
+        const result = await pool.request().query(`
+            SELECT
+                t.table_id,
+                t.table_name,
+                t.seats,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM dbo.orders AS o
+                        WHERE o.table_id = t.table_id
+                          AND o.status IN ('pending', 'serving')
+                    ) THEN 'occupied'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM dbo.table_order_links AS l
+                        JOIN dbo.orders AS o ON o.order_id = l.order_id
+                        WHERE l.table_id = t.table_id
+                          AND o.status IN ('pending', 'serving')
+                    ) THEN 'occupied'
+                    WHEN t.status IN ('reserved', 'maintenance') THEN t.status
+                    ELSE t.status
+                END AS status,
+                t.is_active
+            FROM dbo.[tables] AS t
+            ORDER BY t.table_id
+        `);
 
-const result = await pool.request().query(`
-    SELECT
-        t.table_id,
-        t.table_name,
-        t.seats,
-        CASE
-            WHEN EXISTS (
-                SELECT 1
-                FROM dbo.orders AS o
-                WHERE o.table_id = t.table_id
-                  AND o.status IN ('pending', 'serving')
-            )
-            THEN 'occupied'
-            WHEN EXISTS (SELECT 1 FROM dbo.table_order_links AS l JOIN dbo.orders AS lo ON lo.order_id = l.order_id WHERE l.table_id = t.table_id AND lo.status IN ('pending', 'serving')) THEN 'occupied'
-             WHEN t.status IN ('reserved', 'maintenance') THEN t.status
-            ELSE 'available'
-        END AS status,
-        t.is_active
-    FROM dbo.[tables] AS t
-    ORDER BY t.table_id
-`);
-        res.json(result.recordset);
+        return res.json(result.recordset);
     } catch (error) {
-        console.error("Loi lay danh sach ban:", error);
-        res.status(500).json({
-            error: "Khong the lay danh sach ban"
-        });
+        console.error("Lỗi lấy danh sách bàn:", error);
+        return res.status(500).json({ error: "Không thể lấy danh sách bàn." });
     }
 });
 
 // Lay cac don dang mo kem chi tiet mon de frontend khong phu thuoc localStorage.
-router.get("/active-orders", async (req, res) => {
+router.get("/active-orders", requireTableRead, async (req, res) => {
   try {
     const pool = await connectDB();
     const result = await pool.request().query(`
@@ -87,7 +105,7 @@ router.get("/active-orders", async (req, res) => {
 });
 
 // 2. XEM CHI TIET BAN
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireTableRead, async (req, res) => {
     try {
         const pool = await connectDB();
 
@@ -108,7 +126,7 @@ const result = await pool.request()
                 THEN 'occupied'
                 WHEN EXISTS (SELECT 1 FROM dbo.table_order_links AS l JOIN dbo.orders AS lo ON lo.order_id = l.order_id WHERE l.table_id = t.table_id AND lo.status IN ('pending', 'serving')) THEN 'occupied'
              WHEN t.status IN ('reserved', 'maintenance') THEN t.status
-                ELSE 'available'
+                ELSE t.status
             END AS status,
             t.is_active
         FROM dbo.[tables] AS t
@@ -131,7 +149,7 @@ const result = await pool.request()
 });
 
 // 3. THEM BAN MOI
-router.post("/", async (req, res) => {
+router.post("/", requireAdmin, async (req, res) => {
     try {
         const { table_id, table_name, seats } = req.body || {};
 
@@ -189,7 +207,7 @@ router.post("/", async (req, res) => {
 });
 
 // 4. SUA THONG TIN BAN (cho phep doi ma neu chua co don hang)
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAdmin, async (req, res) => {
     const oldId = String(req.params.id || "").trim();
     const { table_id, table_name, seats } = req.body || {};
     const newId = String(table_id || oldId).trim().toUpperCase();
@@ -262,7 +280,7 @@ router.put("/:id", async (req, res) => {
 
 // 6. XOA VINH VIEN BAN - GIU LICH SU HOA DON VA CHO PHEP TAO LAI MA
 // Luu cac don da ket thuc vao ban luu tru B_ARCHIVE, ghi ma ban goc vao note.
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAdmin, async (req, res) => {
   const tableId = String(req.params.id || "").trim();
   if (!tableId || tableId.length > 10 || tableId === "B_ARCHIVE") {
     return res.status(400).json({ error: "Ma ban khong hop le." });
@@ -343,7 +361,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 // 7. LAY DON HANG HIEN TAI CUA BAN
-router.get("/:id/current-order", async (req, res) => {
+router.get("/:id/current-order", requireTableRead, async (req, res) => {
     try {
         const pool = await connectDB();
 
@@ -398,7 +416,7 @@ router.get("/:id/current-order", async (req, res) => {
 
 
 // Chuyen ban: ban dich trong -> doi ban; ban dich co don -> don mon vao dich.
-router.post("/transfer-order", async (req, res) => {
+router.post("/transfer-order", requireAdmin, async (req, res) => {
   let tx;
   try {
     const { orderId, sourceId, destinationId } = req.body || {};
@@ -480,7 +498,7 @@ router.post("/transfer-order", async (req, res) => {
 });
 
 // Gop hai ban DANG PHUC VU: giu don dich, ban nguon van phuc vu va goi mon vao don chung.
-router.post("/join-table", async (req, res) => {
+router.post("/join-table", requireAdmin, async (req, res) => {
   let tx;
   try {
     const { sourceId, destinationId, orderId, destinationOrderId } = req.body || {};
@@ -561,7 +579,7 @@ router.post("/join-table", async (req, res) => {
   }
 });
 
-router.post("/merge-orders", async (req, res) => {
+router.post("/merge-orders", requireAdmin, async (req, res) => {
   let transaction;
 
   try {
@@ -714,7 +732,7 @@ router.post("/merge-orders", async (req, res) => {
   }
 });
 
-router.post("/pay-order", async (req, res) => {
+router.post("/pay-order", requireAdmin, async (req, res) => {
   let transaction;
 
   try {
@@ -858,7 +876,7 @@ router.post("/pay-order", async (req, res) => {
 
 // 8. LUU HOAC CAP NHAT DON HANG TU FRONTEND VAO SQL SERVER
 // POST /api/tables/sync-order
-router.post("/sync-order", async (req, res) => {
+router.post("/sync-order", requireAdmin, async (req, res) => {
   let transaction;
 
   try {
@@ -1019,7 +1037,7 @@ router.post("/sync-order", async (req, res) => {
 });
 
 // DOI TRANG THAI BAN (khong cho doi ban dang co don mo)
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", requireAdmin, async (req, res) => {
   try {
     const { status } = req.body || {};
     if (!["available", "reserved", "maintenance"].includes(status)) {
@@ -1038,6 +1056,13 @@ router.patch("/:id/status", async (req, res) => {
           AND NOT EXISTS (
             SELECT 1 FROM dbo.orders AS o
             WHERE o.table_id = t.table_id
+              AND o.status IN ('pending', 'serving')
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM dbo.table_order_links AS l
+            JOIN dbo.orders AS o ON o.order_id = l.order_id
+            WHERE l.table_id = t.table_id
               AND o.status IN ('pending', 'serving')
           )
       `);
